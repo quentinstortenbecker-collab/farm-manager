@@ -3237,7 +3237,7 @@ function ctGddSincePlanting(fieldId,weatherLog,plantDate){
   if(!plantDate)return null;
   const pd=new Date(plantDate+'T00:00:00');
   return weatherLog
-    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>=pd;})
+    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;}) // start day AFTER planting
     .reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0);
 }
 
@@ -3245,7 +3245,7 @@ function ctSeasonRain(weatherLog,plantDate){
   if(!plantDate)return null;
   const pd=new Date(plantDate+'T00:00:00');
   return weatherLog
-    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>=pd;})
+    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;}) // start day AFTER planting
     .reduce((s,r)=>s+(Number(r.rain)||0),0);
 }
 
@@ -3316,8 +3316,8 @@ function ctParseDtn(text){
   const rows=[];
   for(const line of lines){
     const parts=line.trim().split(/\s+/);
-    // Format: DATE ACTUAL_HI ACTUAL_LO FEELSHI FEELSLО RAIN SNOW SNOWCOVER GDD EVAP
-    // We want index 0=date, 1=hi, 2=lo, 5=rain, 8=gdd
+    // DTN format: DATE ACTUAL_HI ACTUAL_LO FEELS_HI FEELS_LO RAIN SNOW SNOWCOVER GDD EVAP
+    // Index:       0    1         2         3         4         5    6    7         8   9
     if(parts.length<6)continue;
     const dateRaw=parts[0];
     // parse M/D/YYYY
@@ -3326,9 +3326,14 @@ function ctParseDtn(text){
     const date=`${dm[3]}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
     const hi=parseFloat(parts[1]);
     const lo=parseFloat(parts[2]);
-    const rain=parseFloat(parts[5])||0;
+    // Rain is at index 5; treat 'T' (trace) as 0
+    const rainRaw=parts[5]||'0';
+    const rain=rainRaw==='T'?0:parseFloat(rainRaw)||0;
     if(isNaN(hi)||isNaN(lo))continue;
-    rows.push({date,hi,lo,rain});
+    const row={date,hi,lo,rain:parseFloat(rain.toFixed(2))};
+    // If DTN GDD column (index 8) is present and valid, store it for reference
+    if(parts.length>=9){const dtnGdd=parseFloat(parts[8]);if(!isNaN(dtnGdd))row.dtnGdd=dtnGdd;}
+    rows.push(row);
   }
   return rows;
 }
@@ -3337,19 +3342,21 @@ function ctImportDtn(){
   const text=document.getElementById('ct-dtn-paste').value;
   if(!text.trim()){alert('Paste DTN data first.');return;}
   const rows=ctParseDtn(text);
-  if(!rows.length){alert('Could not parse any rows. Make sure you paste the table with Date, High, Low, Rain columns.');return;}
+  if(!rows.length){alert('Could not parse any rows.\n\nExpected format (tab or space separated):\nM/D/YYYY  Hi  Lo  FeelsHi  FeelsLo  Rain  Snow  SnowCover  GDD  Evap\n\nExample:\n4/15/2026  72  48  70  45  0.34  0  0  4  0.12');return;}
   const st=ctGetState();
-  // DTN data overrides existing entries for same date (rainfall correction use case)
+  // DTN data fully overwrites existing entries for matching dates
   const map={};
   st.weatherLog.forEach(r=>map[r.date]=r);
-  rows.forEach(r=>map[r.date]=r);
+  rows.forEach(r=>map[r.date]=r); // DTN wins on any date collision
   st.weatherLog=Object.values(map).sort((a,b)=>a.date.localeCompare(b.date));
   ctSaveState(st);
   document.getElementById('ct-dtn-paste').value='';
   document.getElementById('ct-dtn-panel').style.display='none';
   renderCropTracker();
   document.getElementById('ct-main').scrollTop=0;
-  alert(`✅ Imported ${rows.length} days from DTN.`);
+  const rainTotal=rows.reduce((s,r)=>s+r.rain,0).toFixed(2);
+  const gddTotal=rows.reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0).toFixed(0);
+  alert(`✅ Imported ${rows.length} days from DTN.\nRainfall total: ${rainTotal}"\nGDDs total: ${gddTotal}\n\nDTN data overwrote any matching dates in weather log.`);
 }
 
 function ctSavePlantDate(fieldId,val){
@@ -3406,8 +3413,8 @@ function renderCropTracker(){
   const plantedDates=Object.values(st.plantDates).filter(Boolean).sort();
   const seasonStart=plantedDates[0]||(S.settings.year+'-04-01');
   const seasonStartD=new Date(seasonStart+'T00:00:00');
-  const totalGdd=wlog.filter(r=>new Date(r.date+'T00:00:00')>=seasonStartD).reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0);
-  const totalRain=wlog.filter(r=>new Date(r.date+'T00:00:00')>=seasonStartD).reduce((s,r)=>s+(Number(r.rain)||0),0);
+  const totalGdd=wlog.filter(r=>new Date(r.date+'T00:00:00')>seasonStartD).reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0);
+  const totalRain=wlog.filter(r=>new Date(r.date+'T00:00:00')>seasonStartD).reduce((s,r)=>s+(Number(r.rain)||0),0);
   const lastEntry=wlog.length?wlog[wlog.length-1].date:'—';
   const monthTotals=ctMonthlyTotals(wlog);
 
@@ -3442,8 +3449,9 @@ function renderCropTracker(){
   <!-- DTN IMPORT PANEL -->
   <div id="ct-dtn-panel" style="display:none;background:#fff;border:1px solid var(--g200);border-radius:var(--r);padding:16px;margin-bottom:16px">
     <div style="font-weight:600;margin-bottom:8px">📋 Import from MyDTN</div>
-    <div style="font-size:12px;color:var(--g400);margin-bottom:8px">Copy the weather table from MyDTN (select all rows for the month) and paste below. DTN data will override existing entries for matching dates — useful for correcting rainfall totals.</div>
-    <textarea id="ct-dtn-paste" style="width:100%;height:120px;font-family:monospace;font-size:12px;border:1px solid var(--g200);border-radius:4px;padding:8px" placeholder="Paste DTN table here...&#10;Example:&#10;4/1/2025  38  30  27  19  0.07  0  0  0  0.04"></textarea>
+    <div style="font-size:12px;color:var(--g400);margin-bottom:4px">Copy the weather table from MyDTN and paste below. <strong>DTN data fully overwrites</strong> any matching dates in the weather log — Hi, Lo, and Rain will all be replaced.</div>
+    <div style="font-size:11px;color:var(--g400);margin-bottom:8px;font-family:monospace;background:var(--g50);padding:6px 8px;border-radius:4px">Expected columns (0-indexed): 0=Date(M/D/YYYY) · 1=Hi · 2=Lo · 3=FeelsHi · 4=FeelsLo · 5=Rain · 6=Snow · 7=SnowCover · 8=GDD · 9=Evap<br>Trace rainfall ("T") is treated as 0.00".</div>
+    <textarea id="ct-dtn-paste" style="width:100%;height:120px;font-family:monospace;font-size:12px;border:1px solid var(--g200);border-radius:4px;padding:8px" placeholder="Paste DTN table here...&#10;Example:&#10;4/15/2026  72  48  70  45  0.34  0  0  4  0.12&#10;4/16/2026  68  52  66  50  0.00  0  0  5  0.11"></textarea>
     <div style="margin-top:8px;display:flex;gap:8px">
       <button class="btn btn-s" onclick="ctImportDtn()">Import</button>
       <button class="btn btn-s btn-o" onclick="document.getElementById('ct-dtn-panel').style.display='none'">Cancel</button>
