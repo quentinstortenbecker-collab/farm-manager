@@ -83,6 +83,8 @@ select.fi{cursor:pointer}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .page{display:none}.page.active{display:block}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.page-content{padding:18px 24px}
 .div{height:1px;background:var(--g200);margin:12px 0}
 .alert{padding:9px 12px;border-radius:var(--r);font-size:12px;margin-bottom:12px}
 .alert-warn{background:#fffbeb;border:1px solid #fcd34d;color:#92400e}
@@ -3390,6 +3392,9 @@ function ctDeleteWeatherRow(date){
 }
 
 function renderCropTracker(){
+  const ctMain=document.getElementById('ct-main');
+  if(!ctMain)return;
+  try{
   const st=ctGetState();
   const fields=S.fields||[];
   const cornFields=fields.filter(f=>f.crop==='corn');
@@ -3571,7 +3576,11 @@ function renderCropTracker(){
 
   </div>`;
 
-  document.getElementById('ct-main').innerHTML=html;
+  ctMain.innerHTML=html;
+  }catch(e){
+    console.error('renderCropTracker error:',e);
+    ctMain.innerHTML=`<div class="topbar"><h1>🌡️ Crop Tracker</h1></div><div class="content"><div class="alert alert-warn">⚠️ Error loading Crop Tracker: ${e.message}. Check browser console (F12) for details.</div></div>`;
+  }
 }
 
 async function ctRefreshWeather(){
