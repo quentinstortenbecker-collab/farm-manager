@@ -3476,7 +3476,7 @@ function renderCropTracker(){
       const pd=st.plantDates[f.id]||null;
       const gdd=pd?ctGddSincePlanting(f.id,wlog,pd):null;
       const pct=gdd!==null?Math.min(100,(gdd/450)*100):0;
-      const rain=pd?ctSeasonRain(f.id,wlog,pd):null;
+      const rain=pd?ctSeasonRain(wlog,pd):null;
       const barColor=pct>=90?'var(--ad)':pct>=70?'var(--am)':'var(--gm)';
       return`<div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
