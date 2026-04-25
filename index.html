@@ -1676,29 +1676,59 @@ function toggleActual(id){
   const key=getPlanKey(activeFieldId);
   const plan=S.appPlans[key]||[];
   const r=plan.find(x=>x.id===id);
-  if(r){r.isActual=!r.isActual;save();ctSyncFromAppPlan();renderAppPlan();}
+  if(r){
+    r.isActual=!r.isActual;
+    clearTimeout(_saveTimer);
+    pushToCloud();
+    ctSyncFromAppPlan();
+    renderAppPlan();
+  }
 }
 function editAppDate(id,val){
   const key=getPlanKey(activeFieldId);
   const plan=S.appPlans[key]||[];
   const r=plan.find(x=>x.id===id);
-  if(r){r.dateApplied=val;save();ctSyncFromAppPlan();}
+  if(r){
+    r.dateApplied=val;
+    // Flush immediately — dates are intentional entries, skip debounce
+    clearTimeout(_saveTimer);
+    pushToCloud();
+    ctSyncFromAppPlan();
+    renderAppPlan();
+  }
 }
 function ctSyncFromAppPlan(){
-  // Walk all fields and all app plan entries — sync PRE/POST dates into crop tracker spray log
+  // Walk all fields and sync key pass dates into crop tracker
   const st=ctGetState();
   const yr=S.settings.year||new Date().getFullYear();
   S.fields.forEach(f=>{
     const key=getPlanKey(f.id,yr);
     const plan=S.appPlans[key]||[];
-    // Find earliest applied PRE date
-    const preRows=plan.filter(r=>r.pass==='Pre-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
-    const postRows=plan.filter(r=>r.pass==='Post-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
     if(!st.sprayLog[f.id])st.sprayLog[f.id]={};
+
+    // Planting Pass → plantDates (for GDD tracking)
+    const plantRows=plan.filter(r=>r.pass==='Planting Pass'&&r.isActual&&r.dateApplied);
+    if(plantRows.length){
+      const earliest=plantRows.map(r=>r.dateApplied).sort()[0];
+      st.plantDates[f.id]=earliest;
+    }
+
+    // Pre-Emerge Spray Pass (corn) → sprayLog.pre
+    const preRows=plan.filter(r=>r.pass==='Pre-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
     if(preRows.length){
       const earliest=preRows.map(r=>r.dateApplied).sort()[0];
       st.sprayLog[f.id].pre=earliest;
     }
+
+    // Pre-Emerge Spray Pass 2 (soy) → sprayLog.pre if no corn pre exists
+    const pre2Rows=plan.filter(r=>r.pass==='Pre-Emerge Spray Pass 2'&&r.isActual&&r.dateApplied);
+    if(pre2Rows.length&&!preRows.length){
+      const earliest=pre2Rows.map(r=>r.dateApplied).sort()[0];
+      st.sprayLog[f.id].pre=earliest;
+    }
+
+    // Post-Emerge Spray Pass → sprayLog.post1
+    const postRows=plan.filter(r=>r.pass==='Post-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
     if(postRows.length){
       const earliest=postRows.map(r=>r.dateApplied).sort()[0];
       st.sprayLog[f.id].post1=earliest;
