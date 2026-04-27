@@ -1120,6 +1120,8 @@ async function authSignOut(){
 let S={};
 let _saveTimer=null;
 let _ctForecast=[]; // cached 14-day forecast for inline GDD cutoff projection
+let _pushInFlight=false;  // true while a pushToCloud fetch is in progress
+let _pushPending=false;   // true if another save was requested while push was in flight
 
 function mergeDefaults(loaded){
   // Only fill in missing top-level keys — never overwrite cloud data
@@ -1134,6 +1136,11 @@ function mergeDefaults(loaded){
   if(!loaded.loans) loaded.loans=JSON.parse(JSON.stringify(DEFAULTS.loans));
   if(!loaded.budgets) loaded.budgets=JSON.parse(JSON.stringify(DEFAULTS.budgets));
   if(!loaded.mtm) loaded.mtm=JSON.parse(JSON.stringify(DEFAULTS.mtm));
+  // Ensure cropTracker always has all required sub-keys
+  if(!loaded.cropTracker) loaded.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
+  if(!loaded.cropTracker.plantDates) loaded.cropTracker.plantDates={};
+  if(!loaded.cropTracker.weatherLog) loaded.cropTracker.weatherLog=[];
+  if(!loaded.cropTracker.sprayLog) loaded.cropTracker.sprayLog={};
   // Migrate old single soyPrice/soyBasis to per-enterprise fields if needed
   if(loaded.mtm.soyPrice!==undefined&&loaded.mtm.soyCommPrice===undefined){
     const p=+loaded.mtm.soyPrice||0;const b=+loaded.mtm.soyBasis||0;
@@ -1171,23 +1178,34 @@ async function loadFromCloud(){
 }
 
 async function pushToCloud(){
+  // If a push is already running, mark pending and bail — the finally block will re-run
+  if(_pushInFlight){_pushPending=true;return;}
+  _pushInFlight=true;
+  _pushPending=false;
   const ind=document.getElementById('sync-indicator');
   ind.className='syncing';ind.textContent='☁ Syncing…';
+  // Snapshot S right before the network call so we always send the latest state
+  const snapshot=JSON.parse(JSON.stringify(S));
   try{
-    const{error}=await sb.from('farm_data').upsert({farm_key:FARM_KEY,data:S,updated_at:new Date().toISOString()},{onConflict:'farm_key'});
+    const{error}=await sb.from('farm_data').upsert({farm_key:FARM_KEY,data:snapshot,updated_at:new Date().toISOString()},{onConflict:'farm_key'});
     if(error){console.error('Save error:',error);ind.className='';return;}
     ind.className='synced';ind.textContent='✓ Synced';
     setTimeout(()=>{ind.className='';},2000);
   }catch(e){console.error('Cloud save failed:',e);ind.className='';}
+  finally{
+    _pushInFlight=false;
+    // If something changed while we were pushing, push again immediately
+    if(_pushPending){_pushPending=false;pushToCloud();}
+  }
 }
 
 function save(){
-  // Local flash
+  // Flash the local save indicator
   const f=document.getElementById('save-flash');
   f.style.opacity='1';setTimeout(()=>f.style.opacity='0',1400);
-  // Debounce cloud save — wait 1.5s after last change before pushing
+  // Debounce: reset timer on every call, push 800ms after the last change
   clearTimeout(_saveTimer);
-  _saveTimer=setTimeout(pushToCloud,1500);
+  _saveTimer=setTimeout(pushToCloud,800);
 }
 
 /* ══════════ AUTH INIT ══════════ */
@@ -1681,9 +1699,8 @@ function toggleActual(id){
   const r=plan.find(x=>x.id===id);
   if(r){
     r.isActual=!r.isActual;
-    clearTimeout(_saveTimer);
-    pushToCloud();
-    ctSyncFromAppPlan();
+    ctSyncFromAppPlan(); // sync to cropTracker first, then save once
+    save();
     renderAppPlan();
   }
 }
@@ -1693,51 +1710,49 @@ function editAppDate(id,val){
   const r=plan.find(x=>x.id===id);
   if(r){
     r.dateApplied=val;
-    // Flush immediately — dates are intentional entries, skip debounce
-    clearTimeout(_saveTimer);
-    pushToCloud();
-    ctSyncFromAppPlan();
+    ctSyncFromAppPlan(); // sync to cropTracker first, then save once
+    save();
     renderAppPlan();
   }
 }
 function ctSyncFromAppPlan(){
-  // Walk all fields and sync key pass dates into crop tracker
-  const st=ctGetState();
+  // Write planting/spray dates from app plan directly into S.cropTracker.
+  // Does NOT call save() — callers are responsible for that.
+  if(!S.cropTracker)S.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
+  const ct=S.cropTracker;
+  if(!ct.plantDates)ct.plantDates={};
+  if(!ct.sprayLog)ct.sprayLog={};
   const yr=S.settings.year||new Date().getFullYear();
   S.fields.forEach(f=>{
     const key=getPlanKey(f.id,yr);
     const plan=S.appPlans[key]||[];
-    if(!st.sprayLog[f.id])st.sprayLog[f.id]={};
+    if(!ct.sprayLog[f.id])ct.sprayLog[f.id]={};
 
-    // Planting Pass → plantDates (for GDD tracking)
+    // Planting Pass → plantDates
     const plantRows=plan.filter(r=>r.pass==='Planting Pass'&&r.isActual&&r.dateApplied);
     if(plantRows.length){
-      const earliest=plantRows.map(r=>r.dateApplied).sort()[0];
-      st.plantDates[f.id]=earliest;
+      ct.plantDates[f.id]=plantRows.map(r=>r.dateApplied).sort()[0];
     }
 
     // Pre-Emerge Spray Pass (corn) → sprayLog.pre
     const preRows=plan.filter(r=>r.pass==='Pre-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
     if(preRows.length){
-      const earliest=preRows.map(r=>r.dateApplied).sort()[0];
-      st.sprayLog[f.id].pre=earliest;
+      ct.sprayLog[f.id].pre=preRows.map(r=>r.dateApplied).sort()[0];
     }
 
     // Pre-Emerge Spray Pass 2 (soy) → sprayLog.pre if no corn pre exists
     const pre2Rows=plan.filter(r=>r.pass==='Pre-Emerge Spray Pass 2'&&r.isActual&&r.dateApplied);
     if(pre2Rows.length&&!preRows.length){
-      const earliest=pre2Rows.map(r=>r.dateApplied).sort()[0];
-      st.sprayLog[f.id].pre=earliest;
+      ct.sprayLog[f.id].pre=pre2Rows.map(r=>r.dateApplied).sort()[0];
     }
 
     // Post-Emerge Spray Pass → sprayLog.post1
     const postRows=plan.filter(r=>r.pass==='Post-Emerge Spray Pass'&&r.isActual&&r.dateApplied);
     if(postRows.length){
-      const earliest=postRows.map(r=>r.dateApplied).sort()[0];
-      st.sprayLog[f.id].post1=earliest;
+      ct.sprayLog[f.id].post1=postRows.map(r=>r.dateApplied).sort()[0];
     }
   });
-  ctSaveState(st);
+  // S.cropTracker is already mutated in place — no save() call here
 }
 function toggleApCat(groupId){
   const rows=document.querySelectorAll('tr.'+groupId);
