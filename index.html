@@ -1119,6 +1119,7 @@ async function authSignOut(){
 /* ══════════ STATE ══════════ */
 let S={};
 let _saveTimer=null;
+let _ctForecast=[]; // cached 14-day forecast for inline GDD cutoff projection
 
 function mergeDefaults(loaded){
   // Only fill in missing top-level keys — never overwrite cloud data
@@ -3237,7 +3238,7 @@ function ctGddSincePlanting(fieldId,weatherLog,plantDate){
   if(!plantDate)return null;
   const pd=new Date(plantDate+'T00:00:00');
   return weatherLog
-    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;}) // start day AFTER planting
+    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;})
     .reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0);
 }
 
@@ -3245,8 +3246,32 @@ function ctSeasonRain(weatherLog,plantDate){
   if(!plantDate)return null;
   const pd=new Date(plantDate+'T00:00:00');
   return weatherLog
-    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;}) // start day AFTER planting
+    .filter(r=>{const d=new Date(r.date+'T00:00:00');return d>pd;})
     .reduce((s,r)=>s+(Number(r.rain)||0),0);
+}
+
+// Project when a field will hit 450 GDUs using _ctForecast cache
+// Returns {date, daysOut, gddLeft, sprayContext} or null if no forecast
+function ctProjectCutoff(currentGdd){
+  if(!_ctForecast||!_ctForecast.length)return null;
+  const remaining=450-currentGdd;
+  if(remaining<=0)return{date:null,daysOut:0,gddLeft:0,sprayContext:[]};
+  let acc=0;
+  for(let i=0;i<_ctForecast.length;i++){
+    acc+=_ctForecast[i].gdd;
+    if(acc>=remaining){
+      const cutoffDate=_ctForecast[i].date;
+      // Grab ±2 days around cutoff for spray context
+      const ctx=[];
+      for(let j=Math.max(0,i-2);j<=Math.min(_ctForecast.length-1,i+2);j++){
+        ctx.push({..._ctForecast[j],isCutoff:j===i});
+      }
+      return{date:cutoffDate,daysOut:i+1,gddLeft:remaining,sprayContext:ctx};
+    }
+  }
+  // Not reached within 14 days
+  const gddLeft=remaining-_ctForecast.reduce((s,d)=>s+d.gdd,0);
+  return{date:'14+ days',daysOut:15,gddLeft:Math.max(0,gddLeft),sprayContext:[]};
 }
 
 function ctMonthlyTotals(weatherLog){
@@ -3316,24 +3341,20 @@ function ctParseDtn(text){
   const rows=[];
   for(const line of lines){
     const parts=line.trim().split(/\s+/);
-    // DTN format: DATE ACTUAL_HI ACTUAL_LO FEELS_HI FEELS_LO RAIN SNOW SNOWCOVER GDD EVAP
-    // Index:       0    1         2         3         4         5    6    7         8   9
+    // DTN format: DATE Hi Lo FeelsHi FeelsLo Rain Snow SnowCover GDD Evap
+    // Index:       0    1  2  3       4       5    6    7         8   9
     if(parts.length<6)continue;
     const dateRaw=parts[0];
-    // parse M/D/YYYY
     const dm=dateRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if(!dm)continue;
     const date=`${dm[3]}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
     const hi=parseFloat(parts[1]);
     const lo=parseFloat(parts[2]);
-    // Rain is at index 5; treat 'T' (trace) as 0
-    const rainRaw=parts[5]||'0';
-    const rain=rainRaw==='T'?0:parseFloat(rainRaw)||0;
     if(isNaN(hi)||isNaN(lo))continue;
-    const row={date,hi,lo,rain:parseFloat(rain.toFixed(2))};
-    // If DTN GDD column (index 8) is present and valid, store it for reference
-    if(parts.length>=9){const dtnGdd=parseFloat(parts[8]);if(!isNaN(dtnGdd))row.dtnGdd=dtnGdd;}
-    rows.push(row);
+    // Rain at index 5 — treat 'T' (trace) as 0
+    const rainRaw=parts[5]||'0';
+    const rain=rainRaw.toUpperCase()==='T'?0:parseFloat(rainRaw)||0;
+    rows.push({date,hi,lo,rain:parseFloat(rain.toFixed(2))});
   }
   return rows;
 }
@@ -3342,21 +3363,21 @@ function ctImportDtn(){
   const text=document.getElementById('ct-dtn-paste').value;
   if(!text.trim()){alert('Paste DTN data first.');return;}
   const rows=ctParseDtn(text);
-  if(!rows.length){alert('Could not parse any rows.\n\nExpected format (tab or space separated):\nM/D/YYYY  Hi  Lo  FeelsHi  FeelsLo  Rain  Snow  SnowCover  GDD  Evap\n\nExample:\n4/15/2026  72  48  70  45  0.34  0  0  4  0.12');return;}
-  const st=ctGetState();
-  // DTN data fully overwrites existing entries for matching dates
+  if(!rows.length){alert('Could not parse any rows.\n\nExpected format:\nM/D/YYYY  Hi  Lo  FeelsHi  FeelsLo  Rain  Snow  SnowCover  GDD  Evap\n\nExample:\n4/15/2026  72  48  70  45  0.34  0  0  4  0.12');return;}
+  // Surgically update ONLY weatherLog — plantDates and sprayLog are never touched
+  if(!S.cropTracker)S.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
   const map={};
-  st.weatherLog.forEach(r=>map[r.date]=r);
+  (S.cropTracker.weatherLog||[]).forEach(r=>map[r.date]=r);
   rows.forEach(r=>map[r.date]=r); // DTN wins on any date collision
-  st.weatherLog=Object.values(map).sort((a,b)=>a.date.localeCompare(b.date));
-  ctSaveState(st);
+  S.cropTracker.weatherLog=Object.values(map).sort((a,b)=>a.date.localeCompare(b.date));
+  save(); // push S to cloud without rebuilding cropTracker object
   document.getElementById('ct-dtn-paste').value='';
   document.getElementById('ct-dtn-panel').style.display='none';
   renderCropTracker();
   document.getElementById('ct-main').scrollTop=0;
   const rainTotal=rows.reduce((s,r)=>s+r.rain,0).toFixed(2);
   const gddTotal=rows.reduce((s,r)=>s+ctCalcGdd(r.hi,r.lo),0).toFixed(0);
-  alert(`✅ Imported ${rows.length} days from DTN.\nRainfall total: ${rainTotal}"\nGDDs total: ${gddTotal}\n\nDTN data overwrote any matching dates in weather log.`);
+  alert(`✅ Imported ${rows.length} days from DTN.\nRainfall total: ${rainTotal}"\nGDDs: ${gddTotal}\n\nPlant dates and spray dates are untouched.`);
 }
 
 function ctSavePlantDate(fieldId,val){
@@ -3448,12 +3469,12 @@ function renderCropTracker(){
 
   <!-- DTN IMPORT PANEL -->
   <div id="ct-dtn-panel" style="display:none;background:#fff;border:1px solid var(--g200);border-radius:var(--r);padding:16px;margin-bottom:16px">
-    <div style="font-weight:600;margin-bottom:8px">📋 Import from MyDTN</div>
-    <div style="font-size:12px;color:var(--g400);margin-bottom:4px">Copy the weather table from MyDTN and paste below. <strong>DTN data fully overwrites</strong> any matching dates in the weather log — Hi, Lo, and Rain will all be replaced.</div>
-    <div style="font-size:11px;color:var(--g400);margin-bottom:8px;font-family:monospace;background:var(--g50);padding:6px 8px;border-radius:4px">Expected columns (0-indexed): 0=Date(M/D/YYYY) · 1=Hi · 2=Lo · 3=FeelsHi · 4=FeelsLo · 5=Rain · 6=Snow · 7=SnowCover · 8=GDD · 9=Evap<br>Trace rainfall ("T") is treated as 0.00".</div>
-    <textarea id="ct-dtn-paste" style="width:100%;height:120px;font-family:monospace;font-size:12px;border:1px solid var(--g200);border-radius:4px;padding:8px" placeholder="Paste DTN table here...&#10;Example:&#10;4/15/2026  72  48  70  45  0.34  0  0  4  0.12&#10;4/16/2026  68  52  66  50  0.00  0  0  5  0.11"></textarea>
+    <div style="font-weight:600;margin-bottom:6px">📋 Import from MyDTN</div>
+    <div style="font-size:12px;color:var(--g400);margin-bottom:4px">Paste your DTN weather table below. <strong>Only the weather log is updated</strong> — plant dates and spray dates are never affected.</div>
+    <div style="font-size:11px;color:var(--g400);margin-bottom:8px;font-family:monospace;background:var(--g50);padding:6px 8px;border-radius:4px">Columns: Date(M/D/YYYY) · Hi · Lo · FeelsHi · FeelsLo · <strong>Rain</strong> · Snow · SnowCover · GDD · Evap &nbsp;|&nbsp; "T" (trace) = 0.00"</div>
+    <textarea id="ct-dtn-paste" style="width:100%;height:120px;font-family:monospace;font-size:12px;border:1px solid var(--g200);border-radius:4px;padding:8px" placeholder="Paste DTN table here...&#10;Example:&#10;4/15/2026  72  48  70  45  0.34  0  0  4  0.12&#10;4/16/2026  68  52  66  50  T  0  0  5  0.11"></textarea>
     <div style="margin-top:8px;display:flex;gap:8px">
-      <button class="btn btn-s" onclick="ctImportDtn()">Import</button>
+      <button class="btn btn-s" onclick="ctImportDtn()">Import Weather</button>
       <button class="btn btn-s btn-o" onclick="document.getElementById('ct-dtn-panel').style.display='none'">Cancel</button>
     </div>
   </div>
@@ -3483,7 +3504,10 @@ function renderCropTracker(){
 
   <!-- CORN GDD PROGRESS -->
   <div class="card" style="margin-bottom:16px">
-    <div style="font-weight:600;margin-bottom:12px">🌽 Corn GDD Progress — Herbicide Cutoff (450 GDUs)</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-weight:600">🌽 Corn GDD Progress — Herbicide Cutoff (450 GDUs)</div>
+      ${_ctForecast.length?'<span style="font-size:11px;color:var(--gm)">📡 Forecast loaded</span>':'<span style="font-size:11px;color:var(--g400)">Load 14-Day Planner for projected cutoff dates</span>'}
+    </div>
     ${cornFields.length===0?'<div style="color:var(--g400);font-size:13px">No corn fields found. Check Fields page.</div>':
     cornFields.map(f=>{
       const pd=st.plantDates[f.id]||null;
@@ -3491,7 +3515,43 @@ function renderCropTracker(){
       const pct=gdd!==null?Math.min(100,(gdd/450)*100):0;
       const rain=pd?ctSeasonRain(wlog,pd):null;
       const barColor=pct>=90?'var(--ad)':pct>=70?'var(--am)':'var(--gm)';
-      return`<div style="margin-bottom:14px">
+      const proj=gdd!==null?ctProjectCutoff(gdd):null;
+      // Build projected cutoff badge
+      let projHtml='';
+      if(proj){
+        if(proj.daysOut===0){
+          projHtml=`<div style="margin-top:6px;padding:6px 10px;background:#fee2e2;border-radius:4px;font-size:12px;color:#991b1b;font-weight:600">⛔ Already past 450 GDU cutoff — do not apply postemergence herbicide</div>`;
+        } else if(proj.daysOut>=15){
+          projHtml=`<div style="margin-top:6px;padding:6px 10px;background:#f0fdf4;border-radius:4px;font-size:12px;color:#166534">✅ Cutoff beyond 14-day forecast — ${proj.gddLeft.toFixed(0)} GDUs remaining</div>`;
+        } else {
+          // Build spray context mini-table
+          const ctxRows=proj.sprayContext.map(d=>{
+            const windColor=d.wind>=20?'color:#dc2626;font-weight:600':d.wind>=12?'color:#d97706':'';
+            const rainColor=d.rain>0.1?'color:#2196f3;font-weight:600':'';
+            const pctColor=d.rainPct>=60?'color:#2196f3':d.rainPct>=40?'color:#d97706':'color:var(--g400)';
+            const rowBg=d.isCutoff?'background:#fffbeb;font-weight:600':'';
+            const marker=d.isCutoff?'⚠️ ':'';
+            return`<tr style="${rowBg}">
+              <td>${marker}${d.date}</td>
+              <td>${d.hi}°/${d.lo}°</td>
+              <td style="${rainColor}">${d.rain.toFixed(2)}"</td>
+              <td style="${pctColor}">${d.rainPct||0}%</td>
+              <td style="${windColor}">${d.wind||0} mph</td>
+              <td>${d.gdd.toFixed(0)} GDU</td>
+            </tr>`;
+          }).join('');
+          const urgColor=proj.daysOut<=4?'#dc2626':proj.daysOut<=8?'#d97706':'#3c4043';
+          projHtml=`<div style="margin-top:8px;padding:8px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:4px">
+            <div style="font-size:12px;font-weight:600;color:${urgColor};margin-bottom:6px">⏱ Projected cutoff: <strong>${proj.date}</strong> (~${proj.daysOut} days, ${proj.gddLeft.toFixed(0)} GDUs remaining)</div>
+            <div style="font-size:11px;color:var(--g400);margin-bottom:4px">Spray window context — highlighted row = projected cutoff day:</div>
+            <div style="overflow-x:auto"><table class="tbl" style="font-size:11px">
+              <thead><tr><th>Date</th><th>Hi/Lo</th><th>Rain</th><th>Rain%</th><th>Wind</th><th>GDUs</th></tr></thead>
+              <tbody>${ctxRows}</tbody>
+            </table></div>
+          </div>`;
+        }
+      }
+      return`<div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--g100)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
           <span style="font-weight:500;font-size:13px">${f.name} <span style="color:var(--g400);font-size:11px">(${f.acres} ac)</span></span>
           <div style="display:flex;align-items:center;gap:12px">
@@ -3502,29 +3562,30 @@ function renderCropTracker(){
         <div style="background:var(--g200);border-radius:4px;height:10px;overflow:hidden">
           <div style="background:${barColor};width:${pct}%;height:100%;border-radius:4px;transition:width .3s"></div>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
           <input type="date" value="${pd||''}" style="font-size:11px;border:1px solid var(--g200);border-radius:4px;padding:2px 6px;color:var(--g700)" onchange="ctSavePlantDate(${f.id},this.value)" title="Set planting date">
           ${rain!==null?`<span style="font-size:11px;color:var(--bl)">💧 ${rain.toFixed(2)}" since planting</span>`:''}
           ${pct>=90?`<span style="font-size:11px;color:var(--ad);font-weight:600">⚠️ Near cutoff!</span>`:''}
         </div>
+        ${projHtml}
       </div>`;
     }).join('')}
   </div>
 
-  <!-- SPRAY WINDOWS -->
+  <!-- SPRAY WINDOWS — SOYBEANS ONLY -->
   <div class="card" style="margin-bottom:16px">
-    <div style="font-weight:600;margin-bottom:12px">🧪 Spray Windows by Field</div>
+    <div style="font-weight:600;margin-bottom:12px">🧪 Soybean POST Spray Windows</div>
     <div style="overflow-x:auto">
     <table class="tbl">
       <thead><tr>
         <th>Field</th><th>Crop</th><th>PRE Date</th><th>18-Day POST</th><th>21-Day POST</th><th>30-Day POST</th><th>1st POST Actual</th>
       </tr></thead>
       <tbody>
-      ${allFields.map(f=>{
+      ${(allFields.filter(f=>f.crop&&f.crop.startsWith('soy'))).map(f=>{
         const pd=st.sprayLog[f.id]?.pre||'';
         const post1=st.sprayLog[f.id]?.post1||'';
         const wins=pd?sprayWindows(pd):null;
-        const cropLabel=f.crop==='corn'?'🌽 Corn':f.crop==='soy-nongmo'?'🌱 Non-GMO':f.crop==='soy-commercial'?'🌱 SB Comm':'🌱 Renwick';
+        const cropLabel=f.crop==='soy-nongmo'?'🌱 Non-GMO':f.crop==='soy-commercial'?'🌱 SB Comm':'🌱 Renwick';
         return`<tr>
           <td style="font-weight:500">${f.name}</td>
           <td>${cropLabel}</td>
@@ -3613,6 +3674,8 @@ async function ctLoadPlanner(){
     panel.innerHTML=`<div class="card"><div style="color:var(--ad)">Could not load forecast. Check your connection.</div></div>`;
     return;
   }
+  _ctForecast=forecast;
+  renderCropTracker();
   ctRenderPlanner(forecast);
 }
 
