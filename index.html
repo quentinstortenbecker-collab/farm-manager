@@ -26,6 +26,7 @@ body{font-family:var(--font);background:var(--g50);color:var(--g900);font-size:1
 .ni:hover{background:rgba(255,255,255,.08);color:#fff}
 .ni.active{background:rgba(82,183,136,.2);color:var(--gl);border-left-color:var(--gl)}
 .ni .ic{font-size:14px;width:18px;text-align:center}
+.more-tools-lbl{cursor:pointer;user-select:none}.more-tools-lbl:hover{color:rgba(255,255,255,.7)}
 .main{flex:1;overflow-y:auto;min-width:0}
 .topbar{background:#fff;border-bottom:1px solid var(--g200);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
 .topbar h1{font-size:17px;font-weight:600}
@@ -113,7 +114,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 .field-chip:hover{border-color:var(--gl);color:var(--gm)}
 .field-chip.active{background:var(--gm);color:#fff;border-color:var(--gm)}
 .field-chip .chip-crop{font-size:10px;opacity:.75;margin-left:4px}
-/* ── DASHBOARD: Needs attention ── */
+/* ── DASHBOARD ── */
+.db-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+.db-grid>.card{margin-bottom:0}
+.db-ent-table{font-size:13px}
+.db-ent-table td{padding:9px}
+@media(max-width:900px){.db-grid{grid-template-columns:minmax(0,1fr)}}
 .attn{background:#fff;border:1px solid var(--g200);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px}
 .attn-title{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--g700)}
 .attn-item{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:9px 12px;border-radius:var(--r);font-size:13px;line-height:1.4;margin-bottom:6px}
@@ -163,6 +169,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   .db-ent-scroll th:first-child{background:var(--g50)}
   .db-ent-scroll td,.db-ent-scroll th{white-space:nowrap}
   #page-dashboard .g2>*{min-width:0} /* let the card shrink so the table scrolls inside it */
+  .db-hide-m{display:none} /* phone: drop Acres & Yield so price, break-even and profit fit */
+  .db-ent-table td,.db-ent-table th{padding:8px 5px}
+  .db-ent-table th,.db-ent-table td:first-child{white-space:normal} /* let headers & crop names wrap */
+  .db-ent-table th{font-size:9px}
   /* Bottom padding so content isn't hidden behind bottom nav */
   .main{padding-bottom:64px}
   /* Bottom nav */
@@ -335,31 +345,33 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
     <div class="ni active" onclick="nav('dashboard',this)"><span class="ic">📊</span><span>Dashboard</span></div>
   </div>
   <div class="nsec">
-    <div class="nlbl">Farm Setup</div>
+    <div class="nlbl">Fields &amp; Operations</div>
     <div class="ni" onclick="nav('fields',this)"><span class="ic">🌾</span><span>Fields</span></div>
-    <div class="ni" onclick="nav('budgets',this)"><span class="ic">📋</span><span>Crop Budgets</span></div>
-    <div class="ni" onclick="nav('settings',this)"><span class="ic">⚙️</span><span>Settings</span></div>
-  </div>
-  <div class="nsec">
-    <div class="nlbl">Operations</div>
     <div class="ni" onclick="nav('appplan',this)"><span class="ic">🧪</span><span>Application Plan</span></div>
     <div class="ni" onclick="nav('inputs',this)"><span class="ic">🛒</span><span>Inputs &amp; Inventory</span></div>
-    <div class="ni" onclick="nav('croptracker',this)"><span class="ic">🌡️</span><span>Crop Tracker</span></div>
-    <div class="ni" onclick="nav('plantforecast',this)"><span class="ic">🌱</span><span>Planting Forecast</span></div>
     <div class="ni" onclick="nav('grain',this)"><span class="ic">🌽</span><span>Grain &amp; Bins</span></div>
   </div>
   <div class="nsec">
-    <div class="nlbl">Financials</div>
+    <div class="nlbl">Money</div>
     <div class="ni" onclick="nav('marketing',this)"><span class="ic">💰</span><span>Marketing</span></div>
+    <div class="ni" onclick="nav('loans',this)"><span class="ic">🏦</span><span>Loans</span></div>
     <div class="ni" onclick="nav('equipment',this)"><span class="ic">🚜</span><span>Machinery</span></div>
     <div class="ni" onclick="nav('overhead',this)"><span class="ic">🏠</span><span>Overhead</span></div>
-    <div class="ni" onclick="nav('loans',this)"><span class="ic">🏦</span><span>Loans</span></div>
-    <div class="ni" onclick="nav('balance',this)"><span class="ic">📒</span><span>Balance Sheet</span></div>
-    <div class="ni" onclick="nav('cashflow',this)"><span class="ic">💵</span><span>Cash Flow</span></div>
   </div>
   <div class="nsec">
-    <div class="nlbl">Analysis</div>
-    <div class="ni" onclick="nav('reports',this)"><span class="ic">📈</span><span>Reports</span></div>
+    <div class="ni" onclick="nav('reports',this)"><span class="ic">📈</span><span>Field Cost Report</span></div>
+    <div class="ni" onclick="nav('settings',this)"><span class="ic">⚙️</span><span>Settings</span></div>
+  </div>
+  <!-- Pages not in regular use: kept (nothing deleted), tucked behind a toggle -->
+  <div class="nsec">
+    <div class="nlbl more-tools-lbl" onclick="toggleMoreTools()" title="Pages you don't use often">More tools <span id="more-tools-arrow">▸</span></div>
+    <div id="more-tools" style="display:none">
+      <div class="ni" onclick="nav('budgets',this)"><span class="ic">📋</span><span>Crop Budgets</span></div>
+      <div class="ni" onclick="nav('croptracker',this)"><span class="ic">🌡️</span><span>Crop Tracker</span></div>
+      <div class="ni" onclick="nav('plantforecast',this)"><span class="ic">🌱</span><span>Planting Forecast</span></div>
+      <div class="ni" onclick="nav('cashflow',this)"><span class="ic">💵</span><span>Cash Flow</span></div>
+      <div class="ni" onclick="nav('balance',this)"><span class="ic">📒</span><span>Balance Sheet</span></div>
+    </div>
   </div>
   <div id="user-bar">
     <span class="ub-email" id="ub-email">—</span>
@@ -372,14 +384,14 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   <button class="bn-item active" id="bn-dashboard" onclick="bnNav('dashboard',this)">
     <span class="bn-ic">📊</span><span>Dashboard</span>
   </button>
-  <button class="bn-item" id="bn-appplan" onclick="bnNav('appplan',this)">
-    <span class="bn-ic">🧪</span><span>App Plan</span>
-  </button>
   <button class="bn-item" id="bn-marketing" onclick="bnNav('marketing',this)">
     <span class="bn-ic">💰</span><span>Marketing</span>
   </button>
-  <button class="bn-item" id="bn-croptracker" onclick="bnNav('croptracker',this)">
-    <span class="bn-ic">🌡️</span><span>Tracker</span>
+  <button class="bn-item" id="bn-grain" onclick="bnNav('grain',this)">
+    <span class="bn-ic">🌽</span><span>Grain</span>
+  </button>
+  <button class="bn-item" id="bn-appplan" onclick="bnNav('appplan',this)">
+    <span class="bn-ic">🧪</span><span>App Plan</span>
   </button>
   <button class="bn-item" id="bn-more" onclick="toggleMoreMenu()">
     <span class="bn-ic">☰</span><span>More</span>
@@ -393,16 +405,19 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
     <select id="mm-year" class="fi" onchange="mmSelectYear(this.value)" style="width:auto;margin-left:auto;font-size:14px;padding:4px 8px"></select></div>
   <div class="mm-item" onclick="bnNav('fields',null);closeMoreMenu()"><span class="mm-ic">🌾</span>Fields</div>
   <div class="mm-item" onclick="bnNav('inputs',null);closeMoreMenu()"><span class="mm-ic">🛒</span>Inputs &amp; Inventory</div>
-  <div class="mm-item" onclick="bnNav('budgets',null);closeMoreMenu()"><span class="mm-ic">📋</span>Crop Budgets</div>
-  <div class="mm-item" onclick="bnNav('reports',null);closeMoreMenu()"><span class="mm-ic">📈</span>Reports</div>
+  <div class="mm-item" onclick="bnNav('loans',null);closeMoreMenu()"><span class="mm-ic">🏦</span>Loans</div>
   <div class="mm-item" onclick="bnNav('equipment',null);closeMoreMenu()"><span class="mm-ic">🚜</span>Machinery</div>
   <div class="mm-item" onclick="bnNav('overhead',null);closeMoreMenu()"><span class="mm-ic">🏠</span>Overhead</div>
-  <div class="mm-item" onclick="bnNav('loans',null);closeMoreMenu()"><span class="mm-ic">🏦</span>Loans</div>
-  <div class="mm-item" onclick="bnNav('plantforecast',null);closeMoreMenu()"><span class="mm-ic">🌱</span>Planting Forecast</div>
-  <div class="mm-item" onclick="bnNav('grain',null);closeMoreMenu()"><span class="mm-ic">🌽</span>Grain &amp; Bins</div>
-  <div class="mm-item" onclick="bnNav('balance',null);closeMoreMenu()"><span class="mm-ic">📒</span>Balance Sheet</div>
-  <div class="mm-item" onclick="bnNav('cashflow',null);closeMoreMenu()"><span class="mm-ic">💵</span>Cash Flow</div>
+  <div class="mm-item" onclick="bnNav('reports',null);closeMoreMenu()"><span class="mm-ic">📈</span>Field Cost Report</div>
   <div class="mm-item" onclick="bnNav('settings',null);closeMoreMenu()"><span class="mm-ic">⚙️</span>Settings</div>
+  <div class="mm-item" onclick="toggleMmMoreTools()" style="color:rgba(255,255,255,.45);font-size:12px"><span class="mm-ic">⋯</span>More tools <span id="mm-more-arrow" style="margin-left:4px">▸</span></div>
+  <div id="mm-more-tools" style="display:none">
+    <div class="mm-item" onclick="bnNav('budgets',null);closeMoreMenu()"><span class="mm-ic">📋</span>Crop Budgets</div>
+    <div class="mm-item" onclick="bnNav('croptracker',null);closeMoreMenu()"><span class="mm-ic">🌡️</span>Crop Tracker</div>
+    <div class="mm-item" onclick="bnNav('plantforecast',null);closeMoreMenu()"><span class="mm-ic">🌱</span>Planting Forecast</div>
+    <div class="mm-item" onclick="bnNav('cashflow',null);closeMoreMenu()"><span class="mm-ic">💵</span>Cash Flow</div>
+    <div class="mm-item" onclick="bnNav('balance',null);closeMoreMenu()"><span class="mm-ic">📒</span>Balance Sheet</div>
+  </div>
   <div class="mm-item" onclick="closeMoreMenu();authSignOut()" style="border-top:1px solid rgba(255,255,255,.12)"><span class="mm-ic">↩</span>Sign out</div>
 </div>
 
@@ -416,7 +431,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   <div class="content">
     <div id="db-attention"></div>
     <div class="mg" id="db-metrics"></div>
-    <div class="g2" style="margin-bottom:14px">
+    <div class="db-grid">
       <div class="card" id="db-crop-split"></div>
       <div class="card" id="db-mkt-progress"></div>
     </div>
@@ -554,17 +569,18 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 
 <!-- REPORTS -->
 <div id="page-reports" class="page">
-  <div class="topbar"><div><h1>Reports & Analysis</h1><div class="sub">Profitability · Break-even · Marketing coverage · PCMARS check</div></div>
-    <div class="tbr"><button class="btn btn-o btn-s" onclick="window.print()">Print / PDF</button></div>
+  <div class="topbar"><div><h1>Field Cost Report</h1><div class="sub">Cost and return by field · use 🖨 Print on each table</div></div>
   </div>
   <div class="content">
-    <div class="mg" id="rep-metrics"></div>
+    <!-- Only Field Cost Detail + its Metric Guide are in use. The other reports are kept but hidden
+         (Sale Decision is still reachable from the Dashboard's "Check a sale"). -->
+    <div class="mg" id="rep-metrics" style="display:none"></div>
     <div class="tabs">
-      <div class="tab active" id="rt-fullcost" onclick="showRepTab('fullcost',this)">Full Cost Profitability</div>
-      <div class="tab" id="rt-saledecision" onclick="showRepTab('saledecision',this)">💡 Sale Decision</div>
-      <div class="tab" id="rt-breakeven" onclick="showRepTab('breakeven',this)">Break-Even</div>
-      <div class="tab" id="rt-marketing" onclick="showRepTab('marketing',this)">Mkt Coverage</div>
-      <div class="tab" id="rt-pcmars" onclick="showRepTab('pcmars',this)">PCMARS Reconcile</div>
+      <div class="tab" id="rt-fullcost" onclick="showRepTab('fullcost',this)" style="display:none">Full Cost Profitability</div>
+      <div class="tab" id="rt-saledecision" onclick="showRepTab('saledecision',this)" style="display:none">💡 Sale Decision</div>
+      <div class="tab" id="rt-breakeven" onclick="showRepTab('breakeven',this)" style="display:none">Break-Even</div>
+      <div class="tab" id="rt-marketing" onclick="showRepTab('marketing',this)" style="display:none">Mkt Coverage</div>
+      <div class="tab" id="rt-pcmars" onclick="showRepTab('pcmars',this)" style="display:none">PCMARS Reconcile</div>
       <div class="tab" id="rt-fieldcost" onclick="showRepTab('fieldcost',this)">📋 Field Cost Detail</div>
       <div class="tab" id="rt-fieldnotes" onclick="showRepTab('fieldnotes',this)">📖 Metric Guide</div>
     </div>
@@ -1974,7 +1990,11 @@ function nav(page,el){
   document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   if(el)el.classList.add('active');
+  if(page==='reports') activeRepTab='fieldcost'; // menu always opens the Field Cost report
   curPage=page;renderPage(page);
+  // If the page lives under "More tools", open that section so its menu item shows as active
+  const mt=document.getElementById('more-tools');
+  if(mt&&mt.querySelector(`.ni[onclick*="'${page}'"]`)) setMoreTools(true);
   // Sync bottom nav active state
   document.querySelectorAll('.bn-item').forEach(b=>b.classList.remove('active'));
   const bn=document.getElementById('bn-'+page);
@@ -1997,6 +2017,21 @@ function toggleMoreMenu(){
   }
   document.getElementById('more-menu').classList.toggle('open');
   document.getElementById('more-overlay').classList.toggle('open');
+}
+// Sidebar "More tools" section (pages not in regular use)
+function setMoreTools(open){
+  const el=document.getElementById('more-tools'),ar=document.getElementById('more-tools-arrow');
+  if(el) el.style.display=open?'':'none';
+  if(ar) ar.textContent=open?'▾':'▸';
+}
+function toggleMoreTools(){
+  const el=document.getElementById('more-tools');
+  setMoreTools(el&&el.style.display==='none');
+}
+function toggleMmMoreTools(){
+  const el=document.getElementById('mm-more-tools'),ar=document.getElementById('mm-more-arrow');
+  const open=el.style.display==='none';
+  el.style.display=open?'':'none'; ar.textContent=open?'▾':'▸';
 }
 function mmSelectYear(v){
   closeMoreMenu();
@@ -2033,111 +2068,48 @@ function renderDashboard(){
   setYearBadge();
   renderAttention();
 
-  const ohPA=getOverheadPerAcre();
-  const dsPA=getDebtServicePerAcre();
   const tAc=S.fields.reduce((a,f)=>a+(+f.acres),0)||1;
   const totRev=S.fields.reduce((a,f)=>a+(+f.acres)*getFieldRevPA(f),0);
   const totFullCost=S.fields.reduce((a,f)=>a+(+f.acres)*getFullCostPerAcre(f),0);
   const totNet=totRev-totFullCost;
 
-  // Use getPrice() — the single authoritative price source — for display consistency
-  const nongmoPrice=getPrice('soy-nongmo');
-  const cornAc=S.fields.filter(f=>f.crop==='corn').reduce((a,f)=>a+(+f.acres),0);
-  const soyCommAc=S.fields.filter(f=>f.crop==='soy-commercial').reduce((a,f)=>a+(+f.acres),0);
-  const soyNgAc=S.fields.filter(f=>f.crop==='soy-nongmo').reduce((a,f)=>a+(+f.acres),0);
-  const soyRwAc=S.fields.filter(f=>f.crop==='soy-renwick').reduce((a,f)=>a+(+f.acres),0);
-
   document.getElementById('db-metrics').innerHTML=`
     <div class="mc blue"><div class="ml">Total Acres</div><div class="mv">${fmt(tAc,1)}</div><div class="ms">${S.fields.length} fields</div></div>
-    <div class="mc green" title="Blended: contracted bushels at your sold prices + unsold bushels at market (MTM)"><div class="ml">Projected Revenue · blended</div><div class="mv">${fmtD(totRev)}</div><div class="ms">${fmtD(totRev/tAc,2)}/ac</div></div>
-    <div class="mc amber"><div class="ml">Full Cost</div><div class="mv">${fmtD(totFullCost)}</div><div class="ms">${fmtD(totFullCost/tAc,2)}/ac</div></div>
-    <div class="mc ${totNet>=0?'green':'red'}" title="Blended revenue (contracted at sold prices + unsold at market) minus full cost"><div class="ml">Net Return (Full Cost) · blended</div><div class="mv">${fmtD(totNet)}</div><div class="ms">${fmtD(totNet/tAc,2)}/ac</div></div>`;
+    <div class="mc green" title="Sold bushels at your contract prices + unsold bushels at today's market price"><div class="ml">Projected Revenue</div><div class="mv">${fmtD(totRev)}</div><div class="ms">${fmtD(totRev/tAc,2)}/ac</div></div>
+    <div class="mc amber" title="Inputs + land rent + overhead + machinery"><div class="ml">Full Cost</div><div class="mv">${fmtD(totFullCost)}</div><div class="ms">${fmtD(totFullCost/tAc,2)}/ac</div></div>
+    <div class="mc ${totNet>=0?'green':'red'}" title="Projected revenue minus full cost"><div class="ml">Net Profit</div><div class="mv">${fmtD(totNet)}</div><div class="ms">${fmtD(totNet/tAc,2)}/ac</div></div>`;
 
-  // Enterprise summary — full cost margins
-  const enterprises=[
-    {label:'Corn',       crop:'corn',           ac:cornAc},
-    {label:'SB Comm',    crop:'soy-commercial', ac:soyCommAc},
-    {label:'SB Non-GMO', crop:'soy-nongmo',     ac:soyNgAc},
-    {label:'SB Renwick', crop:'soy-renwick',     ac:soyRwAc},
-  ];
-  // Build soybean combined row first
-  const soyEnts=[
-    {label:'SB Comm',crop:'soy-commercial',ac:soyCommAc},
-    {label:'SB Non-GMO',crop:'soy-nongmo',ac:soyNgAc},
-    {label:'SB Renwick',crop:'soy-renwick',ac:soyRwAc},
-  ].filter(e=>e.ac>0);
-  const totSoyAc=soyEnts.reduce((a,e)=>a+e.ac,0);
-  let soySummaryRow='';
-  if(totSoyAc>0){
-    const soyAllFields=S.fields.filter(f=>f.crop.startsWith('soy'));
-    const soyWAph=soyAllFields.reduce((a,f)=>a+(fYield(f)*(+f.acres)),0)/totSoyAc;
-    const soyInputCPA=soyAllFields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/totSoyAc;
-    const soyRentCPA=soyAllFields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/totSoyAc;
-    const soyFullCPA=soyInputCPA+soyRentCPA+ohPA+machPAFields(soyAllFields);
-    const soyFullBE=soyWAph>0?soyFullCPA/soyWAph:0;
-    // Weighted revenue: each field uses its own crop price × its own APH × its own acres, then divide by total soy acres
-    const soyTotRev=soyAllFields.reduce((a,f)=>a+(+f.acres)*fYield(f)*getBlendedPrice(f.crop),0);
-    const soyWRevPA=soyTotRev/totSoyAc;  // weighted avg revenue/acre across all soy enterprises
-    const soyM=soyWRevPA-soyFullCPA;
-    const anyPrice=soyAllFields.some(f=>getBlendedPrice(f.crop)>0);
-    const soyTotBuAll=soyAllFields.reduce((a,f)=>a+(+f.acres)*fYield(f),0)||1;
-    const soyWBlended=soyTotRev/soyTotBuAll;
-    soySummaryRow=`<tr class="coll-section" onclick="toggleDbSoy()" style="background:var(--g50)">
-      <td style="font-weight:600">🌱 Soybeans (all) <span id="db-soy-tog" style="font-size:11px;color:var(--g400)">▼ detail</span></td>
-      <td class="tr">${fmt(totSoyAc,1)}</td>
-      <td class="tr">${soyWAph.toFixed(0)} bu</td>
-      <td class="tr" style="font-size:11px" title="Blended: contracted avg + unsold @ MTM">${soyWBlended>0?fmtD(soyWBlended,3):'—'}</td>
-      <td class="tr">${fmtD(soyFullCPA,2)}</td>
-      <td class="tr" style="color:var(--g400)">${soyWAph>0?fmtD(cashCostPA(soyFullCPA,soyAllFields)/soyWAph,2):'—'}</td>
-      <td class="tr" style="font-weight:600">${fmtD(soyFullBE,2)}</td>
-      <td class="tr" style="color:${soyM>=0?'var(--gm)':'#dc2626'};font-weight:600">${anyPrice?(soyM>=0?'+':'')+(soyM).toFixed(2):'—'}</td>
+  // ── Profit by crop ── numbers come from cropSnapshot(), same as "Needs attention".
+  // Two prices only: Market (today, incl. basis & premiums) and Your avg price
+  // (sold bu at contract prices + unsold at market — the price profit is figured on).
+  const row=(s,label,attrs)=>{
+    const pc=s.marginPA>=0?'var(--gm)':'#dc2626';
+    return`<tr ${attrs||''}>
+      <td>${label}</td>
+      <td class="tr db-hide-m">${fmt(s.ac,0)}</td>
+      <td class="tr db-hide-m">${s.yld.toFixed(0)}</td>
+      <td class="tr">${s.market>0?fmtD(s.market,2):'—'}</td>
+      <td class="tr">${s.blended>0?fmtD(s.blended,2):'—'}</td>
+      <td class="tr" style="font-weight:600">${fmtD(s.fullBE,2)}</td>
+      <td class="tr" style="font-weight:700;color:${pc}">${s.blended>0?(s.marginPA>=0?'+':'−')+fmtD(Math.abs(s.marginPA),0):'—'}</td>
     </tr>`;
+  };
+  let rows='';
+  const cornS=cropSnapshot(['corn']);
+  if(cornS) rows+=row(cornS,'<strong>🌽 Corn</strong>');
+  const soyS=cropSnapshot(SOY_CROPS);
+  const soyTypes=SOY_CROPS.map(c=>[c,cropSnapshot([c])]).filter(x=>x[1]);
+  if(soyS){
+    const multi=soyTypes.length>1;
+    rows+=row(soyS,`<strong>🌱 Soybeans</strong>${multi?' <span id="db-soy-tog" style="font-size:11px;color:var(--g400)">▼</span>':''}`,
+      multi?'class="coll-section" onclick="toggleDbSoy()" title="Show / hide soybean types"':'');
+    if(multi) soyTypes.forEach(([c,s])=>{
+      rows+=row(s,`<span style="padding-left:16px;color:var(--g700)">${CROP_NAMES[c]}</span>`,'class="db-soy-row"');
+    });
   }
-
-  let entRows=enterprises.map(e=>{
-    if(!e.ac)return'';
-    const isSoy=e.crop.startsWith('soy');
-    const fields=S.fields.filter(f=>f.crop===e.crop);
-    const wAph=fields.reduce((a,f)=>a+(fYield(f)*(+f.acres)),0)/e.ac;
-    const blended=getBlendedPrice(e.crop);
-    const rev=wAph*blended;
-    const inputCPA=fields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/e.ac;
-    const rentCPA=fields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/e.ac;
-    const fullCPA=inputCPA+rentCPA+ohPA+machPAFields(fields);
-    const fullBE=wAph>0?fullCPA/wAph:0;
-    const cashBE=wAph>0?cashCostPA(fullCPA,fields)/wAph:0;
-    const m=rev-fullCPA;
-    const cStat=contractStats(e.crop);
-    const soldPct=Math.round(pct(cStat.bu,wAph*e.ac));
-    const priceCell=blended>0?`<span title="Contracted avg ${fmtD(cStat.avg,3)} · ${soldPct}% sold · unsold @ MTM">${fmtD(blended,3)}</span>`:'<span style="color:#dc2626">—</span>';
-    if(isSoy)return`<tr class="db-soy-row"><td style="padding-left:22px;color:var(--g700)">${cropLabel(e.crop)}</td><td class="tr">${fmt(e.ac,1)}</td><td class="tr">${wAph.toFixed(0)} bu</td><td class="tr">${priceCell}</td><td class="tr">${fmtD(fullCPA,2)}</td><td class="tr" style="color:var(--g400)">${fmtD(cashBE,2)}</td><td class="tr" style="font-weight:600">${fmtD(fullBE,2)}</td><td class="tr" style="color:${m>=0?'var(--gm)':'#dc2626'};font-weight:600">${blended>0?(m>=0?'+':'')+(m).toFixed(2):'—'}</td></tr>`;
-    return`<tr><td style="font-weight:600">${cropLabel(e.crop)}</td><td class="tr">${fmt(e.ac,1)}</td><td class="tr">${wAph.toFixed(0)} bu</td><td class="tr">${priceCell}</td><td class="tr">${fmtD(fullCPA,2)}</td><td class="tr" style="color:var(--g400)">${fmtD(cashBE,2)}</td><td class="tr" style="font-weight:600">${fmtD(fullBE,2)}</td><td class="tr" style="color:${m>=0?'var(--gm)':'#dc2626'};font-weight:600">${blended>0?(m>=0?'+':'')+(m).toFixed(2):'—'}</td></tr>`;
-  });
-  // Insert combined soy row before individual soy rows
-  const cornRow=entRows[0];
-  const soyDetailRows=entRows.slice(1).join('');
-  entRows=cornRow+soySummaryRow+soyDetailRows;
   const mtm=S.mtm||{};
-  const cornMtmEff=getMtmEffectivePrice('corn');
-  const soyMtmEff=getMtmEffectivePrice('soy-commercial');
-  const cornBlended=getBlendedPrice('corn');
-  const soyCommBlended=getBlendedPrice('soy-commercial');
-  const cornCst=contractStats('corn');
-  const soyCst=contractStatsSoyAll();
-  // All-soybean blended price, weighted by each enterprise's expected bushels
-  // (so Non-GMO / Renwick premiums count — not just SB Commercial).
-  const soyAllBlended=(()=>{
-    const fs=S.fields.filter(f=>f.crop.startsWith('soy'));
-    const bu=fs.reduce((a,f)=>a+(+f.acres)*fYield(f),0);
-    return bu>0?fs.reduce((a,f)=>a+(+f.acres)*fYield(f)*getBlendedPrice(f.crop),0)/bu:soyCommBlended;
-  })();
-  const priceStrip=`<div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;margin-bottom:10px;font-size:11px;align-items:center">
-    <span style="font-weight:600;color:var(--gm)">📊 Blended Price</span>
-    <span style="color:var(--g400);font-size:10px">(contracted avg + unsold @ MTM)</span>
-    <span>🌽 Corn: <strong>${cornBlended>0?fmtD(cornBlended,3):'—'}/bu</strong> <span style="color:var(--g400)">${cornCst.bu>0?`${fmt(cornCst.bu,0)} bu @ ${fmtD(cornCst.avg,3)} contracted`:'no contracts'}</span></span>
-    <span>🌱 Soy (all): <strong>${soyAllBlended>0?fmtD(soyAllBlended,3):'—'}/bu</strong> <span style="color:var(--g400)">${soyCst.bu>0?`${fmt(soyCst.bu,0)} bu @ ${fmtD(soyCst.avg,3)} contracted`:'no contracts'}</span></span>
-    ${(cornMtmEff>0||soyMtmEff>0)?`<span style="color:var(--g400)">· MTM: ${fmtD(cornMtmEff,2)} corn / ${fmtD(soyMtmEff,2)} SB Comm · fetched ${mtm.lastFetched?new Date(mtm.lastFetched).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</span>`:'<span style="color:var(--g400)">· <a href="#" onclick="nav(\'marketing\',document.querySelector(\'.ni[onclick*=marketing]\'));setTimeout(refreshFuturesPrices,200);return false" style="color:var(--bl)">Refresh live prices for MTM →</a></span>'}
-  </div>`;
+  const asOf=mtm.lastFetched?'as of '+fmtQuoteTime(mtm.quoteTime||mtm.lastFetched):'not refreshed yet';
+
   // Harvest progress strip — only once something is harvested or an estimate is set
   const hvParts=[['corn','🌽 Corn'],['soy-commercial','🌱 SB Comm'],['soy-nongmo','🟢 Non-GMO'],['soy-renwick','🔵 Renwick']].map(([k,l])=>{
     const fs=S.fields.filter(f=>f.crop===k);if(!fs.length)return'';
@@ -2154,109 +2126,35 @@ function renderDashboard(){
     if(anyEst)txt+=` · <span style="color:#d97706">estimates in use</span>`;
     return`<span>${txt}</span>`;
   }).filter(Boolean);
-  const harvestStrip=hvParts.length?`<div style="display:flex;gap:14px;flex-wrap:wrap;padding:8px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;margin-bottom:10px;font-size:11px;align-items:center">${hvParts.join('')}</div>`:'';
-  document.getElementById('db-crop-split').innerHTML=`<div class="ch"><div class="ct">Enterprise Summary</div>
-    <div style="display:flex;gap:6px;align-items:center">
-      <div class="cs">Cash B/E = your floor · Full B/E = your marketing target (inputs + rent + overhead + machinery incl. depreciation)</div>
-      <button class="btn btn-o btn-s" onclick="toggleDbSoy()">🌱 Toggle Soy Detail</button>
-    </div></div>
-    ${priceStrip}
-    ${harvestStrip}
-    <div class="table-scroll db-ent-scroll"><table><thead><tr><th>Enterprise</th><th class="tr">Acres</th><th class="tr">Yield</th><th class="tr">Blended Price</th><th class="tr">Full Cost/Ac</th><th class="tr" title="Floor: every check written this year, incl. loan principal — no depreciation">Cash B/E</th><th class="tr" title="Marketing target: cash costs + real machinery depreciation">Full B/E</th><th class="tr">Margin/Ac</th></tr></thead>
-    <tbody>
-      ${entRows}
-    </tbody></table></div>
-    <div style="font-size:11px;color:var(--g400);margin-top:8px">Blended price = (contracted bu × avg contract price) + (unsold bu × MTM price) ÷ total bu · OH: ${fmtD(ohPA,2)}/ac · Machinery: by crop (see 🚜 Machinery) · Cash B/E = full cost − depreciation + loan principal (${fmtD(getPrincipalPerAcre(),2)}/ac)</div>
-    ${(()=>{const L=machTrueLadder();return L.ac>0?`<div onclick="machTab='summary';nav('equipment',document.querySelector('.ni[onclick*=equipment]'))" style="cursor:pointer;margin-top:10px;padding:8px 12px;background:#fff;border:1px solid var(--g200);border-radius:var(--r);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;align-items:center" title="Open the Machinery cost center">🚜 <strong>Machinery</strong><span>${fmtD(L.pa(L.cash),0)}/ac cash</span><span>·</span><span><strong>${fmtD(L.pa(L.full),0)}/ac full</strong></span><span>·</span><span style="color:#b45309"><strong>${fmtD(L.pa(L.tru),0)}/ac true</strong> (${fmtD(L.tru,0)}/yr)</span><span style="margin-left:auto;color:var(--g400)">details →</span></div>`:'';})()}`;
+  const harvestStrip=hvParts.length?`<div style="display:flex;gap:14px;flex-wrap:wrap;padding:8px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;margin-bottom:10px;font-size:12px;align-items:center">${hvParts.join('')}</div>`:'';
 
-  // Marketing progress — corn + soybeans
-  const cSt=contractStats('corn');
-  const sSt=contractStatsSoyAll();
-  const cornFields=S.fields.filter(f=>f.crop==='corn');
-  const soyFields=S.fields.filter(f=>f.crop.startsWith('soy'));
-  const cornAph=cornAc>0?cornFields.reduce((a,f)=>a+(fYield(f)*(+f.acres)),0)/cornAc:229;
-  const cornTotBu=cornAc*cornAph;
-  const soyTotBu=soyFields.reduce((a,f)=>a+(fYield(f)*(+f.acres)),0);
-  const cPct=pct(cSt.bu,cornTotBu);
-  const sPct=pct(sSt.bu,soyTotBu);
-  const cornFullCPA=cornAc>0?(cornFields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/cornAc)+(cornFields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/cornAc)+ohPA+machPAFields(cornFields):0;
-  const cornFullBE=cornAph>0?cornFullCPA/cornAph:0;
-  const soyAc=soyFields.reduce((a,f)=>a+(+f.acres),0)||1;
-  const soyWAph=soyTotBu/soyAc;
-  const soyFullCPA=soyAc>0?(soyFields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/soyAc)+(soyFields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/soyAc)+ohPA+machPAFields(soyFields):0;
-  const soyFullBE=soyWAph>0?soyFullCPA/soyWAph:0;
-  // Blended prices for marketing progress comparisons
-  const cornBlendedMkt=getBlendedPrice('corn');
-  const soyBlendedMkt=(()=>{
-    const soyAllF=S.fields.filter(f=>f.crop.startsWith('soy'));
-    const totBu=soyAllF.reduce((a,f)=>a+(+f.acres)*fYield(f),0)||1;
-    const totRev=soyAllF.reduce((a,f)=>a+(+f.acres)*fYield(f)*getBlendedPrice(f.crop),0);
-    return totRev/totBu;
-  })();
-  const beColor=cornBlendedMkt>0&&cornBlendedMkt>=cornFullBE?'var(--gm)':'#dc2626';
-  const sBeColor=soyBlendedMkt>0&&soyBlendedMkt>=soyFullBE?'var(--gm)':'#dc2626';
-  const cornUnsoldBu=Math.max(0,cornTotBu-cSt.bu);
-  const soyUnsoldBu=Math.max(0,soyTotBu-sSt.bu);
-  const cornMtmPrice=getMtmEffectivePrice('corn')||(+sp.cornPrice||0);
-  // Unsold soybeans span three enterprises with different premiums — weight each
-  // enterprise's all-in market price by its own unsold bushels.
-  const soyMtmPrice=(()=>{
-    let rem=0,val=0;
-    ['soy-commercial','soy-nongmo','soy-renwick'].forEach(k=>{
-      const bu=S.fields.filter(f=>f.crop===k).reduce((a,f)=>a+(+f.acres)*fYield(f),0);
-      const r=Math.max(0,bu-contractStats(k).bu);
-      rem+=r; val+=r*getPrice(k);
-    });
-    return rem>0?val/rem:(getMtmEffectivePrice('soy-commercial')||(+sp.soyCommercialPrice||0));
-  })();
-  // Per-enterprise break-even yield: full cost/ac ÷ blended price = bu/ac needed to break even
-  const calcBeYield=(cropKey)=>{
-    const fields=S.fields.filter(f=>f.crop===cropKey);
-    if(!fields.length) return null;
-    const ac=fields.reduce((a,f)=>a+(+f.acres),0)||1;
-    const inputCPA=fields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/ac;
-    const rentCPA=fields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/ac;
-    const fullCPA=inputCPA+rentCPA+ohPA+machPAFields(fields);
-    const blended=getBlendedPrice(cropKey);
-    const aph=fields.reduce((a,f)=>a+(fYield(f)*(+f.acres)),0)/ac;
-    if(!blended||blended<=0) return null;
-    return{beYield:fullCPA/blended,aph,fullCPA};
-  };
-  const beYieldCorn=calcBeYield('corn');
-  const beYieldComm=calcBeYield('soy-commercial');
-  const beYieldNgmo=calcBeYield('soy-nongmo');
-  const beYieldRenwick=calcBeYield('soy-renwick');
-  const fmtBeYield=(d)=>{
-    if(!d) return'<span style="color:var(--g400)">—</span>';
-    const diff=d.aph-d.beYield;
-    const col=diff>=0?'var(--gm)':'#dc2626';
-    const sign=diff>=0?'+':'';
-    return`<span style="color:${col};font-weight:600">${d.beYield.toFixed(1)} bu/ac</span> <span style="color:var(--g400);font-size:11px">(exp. ${d.aph.toFixed(0)}, ${sign}${diff.toFixed(1)})</span>`;
-  };
-  const soyBeLines=[
-    beYieldComm?`<div style="display:flex;justify-content:space-between;margin-top:5px"><span style="color:var(--g400)">🌱 SB Comm B/E yield</span><span>${fmtBeYield(beYieldComm)}</span></div>`:'',
-    beYieldNgmo?`<div style="display:flex;justify-content:space-between;margin-top:5px"><span style="color:var(--g400)">🟢 SB Non-GMO B/E yield</span><span>${fmtBeYield(beYieldNgmo)}</span></div>`:'',
-    beYieldRenwick?`<div style="display:flex;justify-content:space-between;margin-top:5px"><span style="color:var(--g400)">🔵 SB Renwick B/E yield</span><span>${fmtBeYield(beYieldRenwick)}</span></div>`:'',
-  ].join('');
-  document.getElementById('db-mkt-progress').innerHTML=`<div class="ch"><div class="ct">Marketing Progress</div><div class="cs" style="font-size:11px;color:var(--g400)">Blended = contracted avg + unsold @ MTM</div></div>
-    <div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-weight:500">🌽 Corn</span><span style="font-weight:600">${cPct}% sold</span></div>
-      <div class="pb"><div class="pf ${+cPct>70?'g':'a'}" style="width:${Math.min(100,+cPct)}%"></div></div>
-      <div style="font-size:11px;color:var(--g400);margin-top:2px">${fmt(cSt.bu)} bu @ ${fmtD(cSt.avg,3)} contracted · ${fmt(cornUnsoldBu,0)} unsold @ MTM ${fmtD(cornMtmPrice,3)} · full B/E <span style="color:${beColor};font-weight:600">${fmtD(cornFullBE,2)}</span></div>
-    </div>
-    <div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-weight:500">🌱 Soybeans</span><span style="font-weight:600">${sPct}% sold</span></div>
-      <div class="pb"><div class="pf ${+sPct>70?'g':'a'}" style="width:${Math.min(100,+sPct)}%"></div></div>
-      <div style="font-size:11px;color:var(--g400);margin-top:2px">${fmt(sSt.bu)} bu @ ${fmtD(sSt.avg,3)} contracted · ${fmt(soyUnsoldBu,0)} unsold @ MTM ${fmtD(soyMtmPrice,3)} · full B/E <span style="color:${sBeColor};font-weight:600">${fmtD(soyFullBE,2)}</span></div>
-    </div>
-    <div style="padding:10px;background:var(--g50);border-radius:var(--r);font-size:12px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--g400)">Corn blended vs full B/E</span><span style="font-weight:600;color:${beColor}">${cornBlendedMkt>0?(cornBlendedMkt>=cornFullBE?'+':'')+(cornBlendedMkt-cornFullBE).toFixed(3)+'/bu — blended '+fmtD(cornBlendedMkt,3):'No price data'}</span></div>
-      <div style="display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--g200)"><span style="color:var(--g400)">Soy blended vs full B/E</span><span style="font-weight:600;color:${sBeColor}">${soyBlendedMkt>0?(soyBlendedMkt>=soyFullBE?'+':'')+(soyBlendedMkt-soyFullBE).toFixed(3)+'/bu — blended '+fmtD(soyBlendedMkt,3):'No price data'}</span></div>
-      <div style="margin-top:8px;margin-bottom:4px;font-size:11px;font-weight:600;color:var(--g700);text-transform:uppercase;letter-spacing:.04em">B/E Yield @ Current Blended Price</div>
-      ${beYieldCorn?`<div style="display:flex;justify-content:space-between;margin-top:5px"><span style="color:var(--g400)">🌽 Corn B/E yield</span><span>${fmtBeYield(beYieldCorn)}</span></div>`:''}
-      ${soyBeLines}
-      <div style="font-size:10px;color:var(--g400);margin-top:6px">B/E yield = full cost/ac ÷ blended price · green = expected yield above B/E, red = below</div>
+  document.getElementById('db-crop-split').innerHTML=`
+    <div class="ch"><div><div class="ct">Profit by crop</div><div class="cs">Market prices ${asOf} · hover a column name for what it means</div></div></div>
+    ${harvestStrip}
+    <div class="table-scroll db-ent-scroll"><table class="db-ent-table">
+      <thead><tr>
+        <th>Crop</th><th class="tr db-hide-m">Acres</th>
+        <th class="tr db-hide-m" title="Expected bu/acre: APH, your in-season estimate, or actual once harvested">Yield</th>
+        <th class="tr" title="Today's price at the elevator: futures + basis + any premium">Market</th>
+        <th class="tr" title="Sold bushels at your contract prices + unsold bushels at today's market. Profit is figured on this price.">Your avg price</th>
+        <th class="tr" title="Full cost per acre (inputs, rent, overhead, machinery) ÷ expected yield">Break-even</th>
+        <th class="tr" title="Your avg price × yield − full cost per acre">Profit/ac</th>
+      </tr></thead>
+      <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--g400)">No fields for this crop year yet</td></tr>'}</tbody>
+    </table></div>`;
+
+  // ── Marketing progress ──
+  const bar=(s,label,sub)=>`<div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:5px"><span style="font-weight:600">${label}</span><span style="font-weight:700">${Math.round(s.pctSold)}% sold</span></div>
+      <div class="pb" style="height:8px"><div class="pf ${s.pctSold>100?'r':'g'}" style="width:${Math.min(100,s.pctSold)}%"></div></div>
+      <div style="font-size:12px;color:var(--g700);margin-top:5px">${s.sold>0?`${fmt(s.sold,0)} bu @ ${fmtD(s.soldAvg,2)}`:'Nothing sold yet'} · <strong>${fmt(s.unsold,0)} bu open</strong></div>
+      ${sub||''}
     </div>`;
+  const soySub=soyTypes.length>1?`<div style="font-size:12px;color:var(--g400);margin-top:3px">${soyTypes.map(([c,s])=>`${CROP_NAMES[c].replace('SB ','')} ${Math.round(s.pctSold)}%`).join(' · ')}</div>`:'';
+  document.getElementById('db-mkt-progress').innerHTML=`<div class="ch"><div class="ct">Marketing progress</div></div>
+    ${cornS?bar(cornS,'🌽 Corn'):''}
+    ${soyS?bar(soyS,'🌱 Soybeans',soySub):''}
+    <button class="btn btn-o btn-s" onclick="goMarketing()">Open Marketing →</button>`;
 }
 
 /* ══════════ DASHBOARD: AT-A-GLANCE ══════════
@@ -2373,7 +2271,7 @@ function toggleDbSoy(){
   let hidden=false;
   rows.forEach(r=>{if(r.style.display==='none')hidden=true;});
   rows.forEach(r=>{r.style.display=hidden?'':'none';});
-  if(tog)tog.textContent=hidden?'▼ detail':'▶ detail';
+  if(tog)tog.textContent=hidden?'▼':'▶';
 }
 function renderAppPlanPage(){
   const fields=S.fields||[];
@@ -3093,7 +2991,7 @@ function renderFields(filter){
       <td class="tr" style="color:var(--g400)">${price>0?fmtD(fullBE,2):'—'}</td>
       <td class="tr" style="color:${m>=0?'var(--gm)':'#dc2626'};font-weight:600">${price>0?(m>=0?'+':'')+(m).toFixed(2):'—'}</td>
       <td class="tc">
-        <button class="btn btn-b btn-s" onclick="activeFieldId=${f.id};nav('appplan',document.querySelectorAll('.ni')[1])" title="App Plan">🧪</button>
+        <button class="btn btn-b btn-s" onclick="activeFieldId=${f.id};nav('appplan',document.querySelector('.ni[onclick*=appplan]'))" title="App Plan">🧪</button>
         <button class="btn btn-r btn-s" onclick="deleteField(${f.id})">✕</button>
       </td>
     </tr>`;
@@ -4650,7 +4548,7 @@ function saveNewLoan(){
 }
 
 /* ══════════ REPORTS ══════════ */
-let activeRepTab='fullcost';
+let activeRepTab='fieldcost';
 /* ── Cost stack helpers ───────────────────────────────────────────
    Full cost per acre for a field =
      variable inputs  (app plan or budget)
@@ -4682,7 +4580,7 @@ function renderReports(){
     <div class="mc amber"><div class="ml">Full Cost</div><div class="mv">${fmtD(totFullCost,0)}</div><div class="ms">${fmtD(totFullCost/tAc,2)}/ac</div></div>
     <div class="mc ${totNet>=0?'blue':'red'}"><div class="ml">Net Return (Full)</div><div class="mv">${fmtD(totNet,0)}</div><div class="ms">${fmtD(totNet/tAc,2)}/ac</div></div>
     <div class="mc"><div class="ml">Cost Stack / Acre</div><div class="mv" style="font-size:13px">In:${fmtD(totInputs/tAc,0)} Rent:${fmtD(totRent/tAc,0)} OH:${fmtD(ohPA,0)} Mach:${fmtD(machPAFields(S.fields),0)}</div></div>`;
-  renderRepTab(activeRepTab);
+  showRepTab(activeRepTab);
 }
 function showRepTab(tab,el){
   activeRepTab=tab;
