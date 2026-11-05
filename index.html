@@ -7861,9 +7861,10 @@ function gRenderLog(){
         ?`<select class="fi" style="font-size:11px;padding:2px 4px;width:auto;max-width:220px" onchange="gAssignContract('${x._k}',${x.id},this.value)">${gAssignOptions(x.crop,x.contractId)}</select>`
         :(c?gEsc(`${c.elevator||''} ${c.date}`):'—')}</td>
       <td style="font-size:11px;color:var(--g400)">${gEsc(x.notes||'')}</td>
-      <td class="tc"><button class="btn btn-r btn-s" onclick="gDelete('${x._k}',${x.id})">✕</button></td></tr>`;
+      <td class="tc" style="white-space:nowrap"><button class="btn btn-o btn-s" onclick="gOpenEditEntry('${x._k}',${x.id})" title="Edit this entry">✎ Edit</button>
+        <button class="btn btn-r btn-s" onclick="gDelete('${x._k}',${x.id})" title="Delete this entry">✕</button></td></tr>`;
   }).join('');
-  return`<div class="card"><div class="ch"><div><div class="ct">Harvest &amp; delivery log</div><div class="cs">All crop years · click bushels to correct · pick a contract on any delivery to assign it</div></div></div>
+  return`<div class="card"><div class="ch"><div><div class="ct">Harvest &amp; delivery log</div><div class="cs">All crop years · ✎ Edit to change any part of an entry · pick a contract on any delivery to assign it</div></div></div>
     <div class="table-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Crop Yr</th><th>Crop</th><th>From</th><th>To</th><th class="tr">Bushels</th><th class="tr">Acres</th><th class="tr">Moist.</th><th>Contract</th><th>Notes</th><th></th></tr></thead>
     <tbody>${rows||'<tr><td colspan="12" style="text-align:center;color:var(--g400);padding:20px">Nothing logged yet. Use + Harvest Entry to start.</td></tr>'}</tbody></table></div></div>`;
 }
@@ -8203,7 +8204,7 @@ function gSaveDelivery(){
   const contractId=+document.getElementById('gd-contract').value||null;
   if(contractId){
     const c=S.contracts.find(x=>x.id===contractId);
-    const wrong=lines.filter(l=>c&&l.bin.crop!==c.crop);
+    const wrong=lines.filter(l=>c&&!gContractCropOk(l.bin.crop,c.crop));
     if(wrong.length){alert(`That contract is for ${gCropLabel(c.crop)}, but Bin ${wrong[0].bin.name} holds ${gCropLabel(wrong[0].bin.crop)}.\n\nPick a matching contract or "Assign later".`);return;}
   }
   // Same bin on two lines: check the combined amount against what's in it
@@ -8227,12 +8228,27 @@ function gSaveDelivery(){
    If the delivery is bigger than what's left on the contract, it offers to
    split it: the contract gets what it needs, the rest stays unassigned. */
 function gContractLeft(c){return Math.max(0,(+c.bu||0)-gContractDelivered(c.id));}
+// Soybeans can be sold across types — e.g. flush loads from Renwick or Non-GMO fields
+// sold as commercial beans — so any soybean load can go on any soybean contract.
+// Corn only matches corn.
+function gContractCropOk(loadCrop,contractCrop){
+  if(loadCrop===contractCrop) return true;
+  return String(loadCrop).startsWith('soy')&&String(contractCrop).startsWith('soy');
+}
 function gAssignOptions(crop,selId){
-  // Any contract for this crop that still has bushels not matched to a load — including
+  // Any matching contract that still has bushels not matched to a load — including
   // ones already checked ✓ Delivered in Marketing (e.g. a cash sale you logged there).
-  const cs=S.contracts.filter(c=>c.crop===crop&&(gContractLeft(c)>0.5||c.id===+selId))
+  const cs=S.contracts.filter(c=>gContractCropOk(crop,c.crop)&&(gContractLeft(c)>0.5||c.id===+selId))
     .sort((a,b)=>String(a.year).localeCompare(String(b.year))||String(a.date).localeCompare(String(b.date)));
-  return`<option value="">— not assigned —</option>`+cs.map(c=>`<option value="${c.id}" ${c.id===+selId?'selected':''}>${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||'Contract')}${c.notes?' · '+gEsc(c.notes):''} · ${gEsc(c.date)} · ${fmt(c.bu)} bu${gContractLeft(c)<c.bu-0.5&&gContractLeft(c)>0.5?' ('+fmt(gContractLeft(c))+' unmatched)':''}${c.completed?' · ✓':''}${String(c.year)!==String(S.activeYear)?' · '+c.year:''}</option>`).join('');
+  const opt=c=>`<option value="${c.id}" ${c.id===+selId?'selected':''}>${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||'Contract')}${c.notes?' · '+gEsc(c.notes):''} · ${gEsc(c.date)} · ${fmt(c.bu)} bu${gContractLeft(c)<c.bu-0.5&&gContractLeft(c)>0.5?' ('+fmt(gContractLeft(c))+' unmatched)':''}${c.completed?' · ✓':''}${String(c.year)!==String(S.activeYear)?' · '+c.year:''}</option>`;
+  // Group by type, the load's own type first
+  const order=[crop,...GRAIN_CROPS.map(g=>g.key).filter(k=>k!==crop)];
+  const groups=order.map(k=>{
+    const mine=cs.filter(c=>c.crop===k); if(!mine.length) return '';
+    const label=(GRAIN_CROPS.find(g=>g.key===k)||{label:k}).label;
+    return`<optgroup label="${label}${k!==crop?' contracts':''}">${mine.map(opt).join('')}</optgroup>`;
+  }).join('');
+  return`<option value="">— not assigned —</option>`+groups;
 }
 function gAssignContract(kind,id,val){
   const g=S.grain, arr=kind==='del'?g.deliveries:g.loads;
@@ -8289,6 +8305,121 @@ function gEditBu(k,id,el){
   const arr=k==='del'?S.grain.deliveries:S.grain.loads,x=arr.find(r=>r.id===id);if(!x)return;
   iePop(el,'Bushels',x.bu,nv=>{const v=parseFloat(nv);if(!(v>0)){alert('Bushels must be more than 0.');return;}x.bu=v;save();renderGrain();},'number');
 }
+/* ── EDIT A LOG ENTRY ──
+   Opens the entry in a form so any part of it can be corrected in place
+   (date, field, bin, town/buyer, bushels, acres, moisture, contract, notes). */
+function gOpenEditEntry(k,id){
+  const g=ensureGrain(), isDel=k==='del';
+  const x=(isDel?g.deliveries:g.loads).find(r=>r.id===+id); if(!x) return;
+  const binOpts=(sel,crop)=>g.bins.map(b=>`<option value="${b.id}" ${+sel===b.id?'selected':''}>Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)}${crop&&b.crop!==crop?' (other crop)':''}</option>`).join('');
+  const yrs=[...new Set([String(+gYear()-2),String(+gYear()-1),String(gYear()),String(x.year)])].sort();
+  const yrOpts=yrs.map(y=>`<option ${String(x.year)===y?'selected':''}>${y}</option>`).join('');
+  let body;
+  if(isDel){
+    body=`<div class="fr fr2">
+        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>
+        <div class="fg"><label class="fl">Bushels</label><input class="fi" id="ge-bu" type="number" step="any" min="0" value="${x.bu}" style="font-weight:600"></div></div>
+      <div class="fr fr2">
+        <div class="fg"><label class="fl">From bin</label><select class="fi" id="ge-bin" onchange="geCropChanged()">${binOpts(x.fromBin)}</select></div>
+        <div class="fg"><label class="fl">Crop year of the grain</label><select class="fi" id="ge-year">${yrOpts}</select></div></div>
+      <div class="fr fr2">
+        <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="ge-buyer" list="g-buyer-list" value="${gEsc(x.to&&x.to!=='Town'?x.to:'')}" placeholder="Town">${gBuyerList()}</div>
+        <div class="fg"><label class="fl">Contract</label><select class="fi" id="ge-contract">${gAssignOptions(x.crop,x.contractId)}</select></div></div>`;
+  }else{
+    const harvest=x.kind!=='carryin';
+    const inYear=harvest&&String(x.year)===String(gYear());
+    const fOpts=(S.fields||[]).map(f=>`<option value="${f.id}" ${+x.fieldId===f.id?'selected':''}>${gEsc(f.name)} — ${gCropLabel(f.crop)}</option>`).join('');
+    const dest=x.toType==='bin'?String(x.to):'buyer';
+    body=`<div class="fr fr2">
+        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>
+        <div class="fg"><label class="fl">Bushels</label><input class="fi" id="ge-bu" type="number" step="any" min="0" value="${x.bu}" style="font-weight:600"></div></div>
+      ${harvest
+        ?(inYear?`<div class="fg"><label class="fl">Field</label><select class="fi" id="ge-field" onchange="geCropChanged()">${fOpts}</select></div>`
+                :`<div class="fg"><label class="fl">Field</label><div class="cs">${x.year} crop field (switch to the ${x.year} crop year to change the field)</div></div>`)
+        :`<div class="fr fr2">
+            <div class="fg"><label class="fl">Crop</label><select class="fi" id="ge-crop" onchange="geCropChanged()">${GRAIN_CROPS.map(c=>`<option value="${c.key}" ${c.key===x.crop?'selected':''}>${c.label}</option>`).join('')}</select></div>
+            <div class="fg"><label class="fl">Crop year</label><select class="fi" id="ge-year">${yrOpts}</select></div></div>`}
+      <div class="fg"><label class="fl">Where did it go?</label><select class="fi" id="ge-dest" onchange="document.getElementById('ge-town').style.display=this.value==='buyer'?'grid':'none'">
+        ${binOpts(dest,x.crop)}${harvest?`<option value="buyer" ${dest==='buyer'?'selected':''}>Direct to town / elevator…</option>`:''}</select></div>
+      <div id="ge-town" class="fr fr2" style="display:${dest==='buyer'?'grid':'none'}">
+        <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="ge-buyer" list="g-buyer-list" value="${gEsc(x.toType==='buyer'?x.to:'')}">${gBuyerList()}</div>
+        <div class="fg"><label class="fl">Contract</label><select class="fi" id="ge-contract">${gAssignOptions(x.crop,x.contractId)}</select></div></div>
+      ${harvest?`<div class="fr fr2">
+        <div class="fg"><label class="fl">Acres harvested (optional)</label><input class="fi" id="ge-acres" type="number" step="any" min="0" value="${x.acres||''}"></div>
+        <div class="fg"><label class="fl">Moisture % (optional)</label><input class="fi" id="ge-moist" type="number" step="0.1" min="0" value="${x.moisture||''}"></div></div>`:''}`;
+  }
+  openModal(`${body}
+    <div class="fg"><label class="fl">Notes</label><input class="fi" id="ge-notes" value="${gEsc(x.notes||'')}"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-p" onclick="gSaveEditEntry('${k}',${x.id})">Save changes</button>
+      <button class="btn btn-o" onclick="closeModal()">Cancel</button></div>`,
+    isDel?'Edit delivery':x.kind==='carryin'?'Edit old crop entry':'Edit harvest entry');
+}
+// Crop of the entry as currently set in the edit form
+function geCrop(k){
+  const bin=document.getElementById('ge-bin'), fld=document.getElementById('ge-field'), cr=document.getElementById('ge-crop');
+  if(bin) return (gBin(bin.value)||{}).crop;
+  if(fld){const f=(S.fields||[]).find(x=>x.id===+fld.value);return f?f.crop:null;}
+  if(cr) return cr.value;
+  return null;
+}
+// Crop changed (field / bin / crop) → refresh the contract list for that crop
+function geCropChanged(){
+  const sel=document.getElementById('ge-contract'); if(!sel) return;
+  const crop=geCrop(); if(!crop) return;
+  const cur=sel.value, c=S.contracts.find(x=>x.id===+cur);
+  sel.innerHTML=gAssignOptions(crop,c&&gContractCropOk(crop,c.crop)?c.id:null);
+}
+function gSaveEditEntry(k,id){
+  const g=ensureGrain(), isDel=k==='del';
+  const x=(isDel?g.deliveries:g.loads).find(r=>r.id===+id); if(!x) return;
+  const v=i=>document.getElementById(i);
+  const bu=parseFloat(v('ge-bu').value)||0;
+  if(!(bu>0)){alert('Bushels must be more than 0.');return;}
+  const date=v('ge-date').value||x.date, notes=v('ge-notes').value.trim();
+  if(isDel){
+    const bin=gBin(v('ge-bin').value), year=v('ge-year').value;
+    if(!bin){alert('Pick a bin.');return;}
+    // grain available = what's in the bin now, plus this delivery's own bushels if it came from the same bin/year
+    const have=gBinContents(bin.id,year)+((+x.fromBin===bin.id&&String(x.year)===String(year))?(+x.bu||0):0);
+    if(bu>have+0.5&&!confirm(`Bin ${bin.name} would only have ${fmt(have)} bu of ${year} grain. Save ${fmt(bu)} bu anyway?`))return;
+    const buyer=v('ge-buyer').value.trim();
+    if(buyer&&!g.buyers.includes(buyer))g.buyers.push(buyer);
+    const cid=+v('ge-contract').value||null;
+    Object.assign(x,{date,bu,fromBin:bin.id,year,crop:bin.crop,to:buyer||'Town',contractId:cid,notes});
+  }else{
+    const harvest=x.kind!=='carryin';
+    let crop=x.crop, year=x.year, fieldId=x.fieldId;
+    if(harvest&&v('ge-field')){const f=(S.fields||[]).find(f=>f.id===+v('ge-field').value);if(!f){alert('Pick a field.');return;}crop=f.crop;fieldId=f.id;}
+    if(!harvest){crop=v('ge-crop').value;year=v('ge-year').value;}
+    const dest=v('ge-dest').value;
+    const upd={date,bu,crop,year,fieldId,notes};
+    if(harvest){upd.acres=parseFloat(v('ge-acres').value)||0;upd.moisture=parseFloat(v('ge-moist').value)||0;}
+    if(dest==='buyer'){
+      const buyer=v('ge-buyer').value.trim();
+      if(!buyer){alert('Enter the buyer or elevator.');return;}
+      if(!g.buyers.includes(buyer))g.buyers.push(buyer);
+      Object.assign(upd,{toType:'buyer',to:buyer,contractId:+v('ge-contract').value||null});
+    }else{
+      const bin=gBin(dest); if(!bin){alert('Pick a bin.');return;}
+      if(bin.crop!==crop){alert(`Bin ${bin.name} is set up for ${gCropLabel(bin.crop)}, not ${gCropLabel(crop)}.\n\nIf that's intended, change the bin's crop in Bin Setup first.`);return;}
+      const after=gBinContents(bin.id)-((x.toType==='bin'&&+x.to===bin.id)?(+x.bu||0):0)+bu, cap=+bin.capacity||0;
+      if(cap>0&&after>cap&&!confirm(`Bin ${bin.name} would hold ${fmt(after)} bu — over its ${fmt(cap)} bu capacity by ${fmt(after-cap)} bu.\n\nSave anyway?`))return;
+      Object.assign(upd,{toType:'bin',to:bin.id,contractId:null});
+    }
+    // Taking bushels out of the bin it was in (moved or reduced) can leave that bin
+    // below zero if grain was already delivered out of it — warn first.
+    if(x.toType==='bin'){
+      const oldBin=gBin(x.to);
+      const stays=upd.toType==='bin'&&+upd.to===+x.to;
+      const left=gBinContents(x.to)-(+x.bu||0)+(stays?bu:0);
+      if(oldBin&&left<-0.5&&!confirm(`Bin ${oldBin.name} would show ${fmt(left)} bu — more grain has been delivered out of it than would be left in it.\n\nSave anyway?`))return;
+    }
+    Object.assign(x,upd);
+  }
+  save();closeModal();renderGrain();
+}
+
 function gDelete(k,id){
   if(!confirm('Delete this entry?'))return;
   if(k==='del')S.grain.deliveries=S.grain.deliveries.filter(r=>r.id!==id);
