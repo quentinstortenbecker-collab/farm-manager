@@ -169,7 +169,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   .db-ent-scroll th:first-child{background:var(--g50)}
   .db-ent-scroll td,.db-ent-scroll th{white-space:nowrap}
   #page-dashboard .g2>*{min-width:0} /* let the card shrink so the table scrolls inside it */
-  .db-hide-m{display:none} /* phone: drop Acres & Yield so price, break-even and profit fit */
+  .db-hide-m{display:none} /* phone: drop less-urgent columns so the key numbers fit */
+  .g-bar{min-width:80px!important}
+  #grain-body td,#grain-body th{padding:7px 6px;min-width:0!important}
   .db-ent-table td,.db-ent-table th{padding:8px 5px}
   .db-ent-table th,.db-ent-table td:first-child{white-space:normal} /* let headers & crop names wrap */
   .db-ent-table th{font-size:9px}
@@ -7690,92 +7692,153 @@ function renderGrain(){
   else body.innerHTML=gRenderSetup();
 }
 
+/* ── POSITION TAB ──
+   One row per crop instead of a card per crop; fields grouped under crop
+   headings; contract hauling shows only what's still left to deliver. */
+let gShowFilled=false;
+function gBar(p,cls,h){ // slim progress bar with % on the right
+  return`<div class="g-bar" style="display:flex;align-items:center;gap:8px;min-width:120px">
+    <div class="pb" style="flex:1;height:${h||8}px"><div class="pf ${cls||'g'}" style="width:${Math.min(100,Math.max(0,p))}%"></div></div>
+    <span style="font-size:12px;font-weight:600;min-width:34px;text-align:right">${p.toFixed(0)}%</span></div>`;
+}
 function gRenderPosition(yr){
   const crops=GRAIN_CROPS.filter(c=>(S.fields||[]).some(f=>f.crop===c.key));
   if(!crops.length)return`<div class="card" style="text-align:center;color:var(--g400);padding:24px">No fields in the ${yr} crop year yet.</div>`;
-  const row=(l,v,st='')=>`<tr><td style="color:var(--g400)">${l}</td><td class="tr" style="${st}">${v}</td></tr>`;
-  const cards=crops.map(c=>{
+  const notes=[];
+  const cropRows=crops.map(c=>{
     const p=gCropPosition(c.key,yr);
     const hp=p.expected>0?Math.min(100,p.harvested/p.expected*100):0;
-    let note='';
-    if(!p.hasStorage){
-      const open=Math.max(0,p.expected-p.contracted);
-      note=`<div class="alert alert-info" style="margin:10px 0 0">No on-farm bin for this crop — it all goes to town.${open>0?` <strong>${fmt(open)} bu</strong> expected with no contract yet.`:''}</div>`;
-    }else if(p.stillToHarvest>p.roomLeft){
-      const short=p.stillToHarvest-p.roomLeft, afterOv=Math.max(0,short-p.ovRoom);
-      note=`<div class="alert alert-warn" style="margin:10px 0 0"><strong>${fmt(short)} bu</strong> still to harvest won't fit in storage bins (${fmt(p.roomLeft)} bu room left).`
-        +(p.ovRoom>0?` Overflow bins can take ${fmt(p.ovRoom)} bu${afterOv>0?` — <strong>${fmt(afterOv)} bu</strong> still needs to go to town.`:'.'}`:'')+`</div>`;
+    // bin room: storage room, or "all to town"
+    let room;
+    if(!p.hasStorage){ room='<span style="color:var(--g400)">no bins — town</span>'; }
+    else{
+      const short=p.stillToHarvest-p.roomLeft;
+      room=`${fmt(p.roomLeft)} bu${short>0?' <span title="Won\'t all fit" style="color:#b45309">⚠</span>':''}`;
+      if(short>0){
+        const afterOv=Math.max(0,short-p.ovRoom);
+        notes.push(`${c.icon} <strong>${c.label}:</strong> ${fmt(short)} bu still to harvest won't fit in storage bins.`
+          +(p.ovRoom>0?` Overflow can take ${fmt(p.ovRoom)} bu${afterOv>0?` — <strong>${fmt(afterOv)} bu</strong> needs to go to town.`:'.'}`:' It needs to go to town.'));
+      }
     }
-    return`<div class="card"><div class="ch"><div><div class="ct">${c.icon} ${c.label}</div><div class="cs">${fmt(p.acres,1)} ac · expected ${fmt(p.expected)} bu</div></div>
-      <div style="text-align:right"><div style="font-size:18px;font-weight:600">${hp.toFixed(0)}%</div><div class="cs">harvested</div></div></div>
-      <div class="pb" style="height:8px;margin-bottom:10px"><div class="pf g" style="width:${hp}%"></div></div>
-      <table><tbody>
-        ${row('Harvested',fmt(p.harvested)+' bu')}
-        ${row('Still to harvest',fmt(p.stillToHarvest)+' bu')}
-        ${p.hasStorage?row('In bins ('+yr+' crop)',fmt(p.inBins)+' bu','font-weight:600'):''}
-        ${row('Delivered',fmt(p.delivered)+' bu')}
-        ${row('Contracted',fmt(p.contracted)+' bu'+(p.contracted?` @ ${fmtD(p.contractedAvg,2)}`:''))}
-        ${row('Unpriced',fmt(p.unpriced)+' bu',p.unpriced>0?'color:#d97706;font-weight:600':'color:var(--gm);font-weight:600')}
-        ${p.hasStorage?row('Value in bins @ market',fmtD(p.value,0)+` <span style="color:var(--g400);font-size:11px">${fmtD(p.price,2)}/bu</span>`):''}
-      </tbody></table>${note}</div>`;
-  }).join('');
-
-  // Field progress
-  const order=GRAIN_CROPS.map(c=>c.key);
-  const fields=(S.fields||[]).slice().sort((a,b)=>order.indexOf(a.crop)-order.indexOf(b.crop));
-  const fRows=fields.map(f=>{
-    const h=gFieldHarvested(f.id,yr),est=(+f.estYield>0?+f.estYield:(+f.aph||0))*(+f.acres||0),y=gFieldYield(f,yr),done=gFieldDone(f.id,yr);
-    const diff=y!=null?y-(+f.aph||0):null;
     return`<tr>
-      <td style="font-weight:500">${gEsc(f.name)}</td><td>${cropLabel(f.crop)}</td>
-      <td class="tr">${fmt(f.acres,1)}</td><td class="tr">${f.aph}</td><td class="tr" style="color:var(--g400)">${fmt(est)}</td>
-      <td class="tr" style="font-weight:600">${h?fmt(h):'—'}</td>
-      <td class="tr">${y!=null?y.toFixed(1):'—'}</td>
-      <td class="tr" style="color:${diff==null?'var(--g400)':diff>=0?'var(--gm)':'#dc2626'};font-weight:600">${diff!=null?(diff>=0?'+':'')+diff.toFixed(1):'—'}</td>
-      <td class="tc"><input type="checkbox" ${done?'checked':''} onchange="gToggleDone(${f.id},this.checked)" title="Mark harvest complete"></td>
+      <td style="white-space:nowrap"><strong>${c.icon} ${c.label}</strong><div style="font-size:11px;color:var(--g400)">${fmt(p.acres,0)} ac</div></td>
+      <td>${gBar(hp)}<div style="font-size:11px;color:var(--g400);margin-top:2px">${fmt(p.harvested)} of ${fmt(p.expected)} bu</div></td>
+      <td class="tr">${p.hasStorage?fmt(p.inBins):'—'}</td>
+      <td class="tr db-hide-m">${fmt(p.delivered)}</td>
+      <td class="tr db-hide-m">${fmt(p.contracted)}${p.contracted?`<div style="font-size:11px;color:var(--g400)">@ ${fmtD(p.contractedAvg,2)}</div>`:''}</td>
+      <td class="tr db-hide-m" style="font-weight:600;color:${p.unpriced>0?'#b45309':'var(--gm)'}">${fmt(p.unpriced)}</td>
+      <td class="tr">${room}</td>
     </tr>`;
   }).join('');
 
-  // Contract deliveries (active crop year)
-  const cs=S.contracts.filter(c=>_sameYear(c));
-  const cRows=cs.map(c=>{
-    const del=gContractDelivered(c.id),rem=(+c.bu||0)-del;
-    return`<tr><td>${gEsc(c.date)}</td><td>${cropLabel(c.crop)}</td><td>${gEsc(c.type)}</td><td>${gEsc(c.elevator||'—')}</td><td>${gEsc(c.delivery||'—')}</td>
-      <td class="tr">${fmt(c.bu)}</td><td class="tr">${del?fmt(del):'—'}</td>
-      <td class="tr" style="font-weight:600;color:${rem<=0||c.completed?'var(--gm)':'var(--g700)'}">${rem<=0?'✓ filled':c.completed?'✓ complete':fmt(rem)}</td></tr>`;
+  // Harvest by field — grouped under crop headings with a crop subtotal
+  const fieldRows=crops.map(c=>{
+    const fs=(S.fields||[]).filter(f=>f.crop===c.key);
+    const ac=gSum(fs,f=>f.acres), h=gSum(fs,f=>gFieldHarvested(f.id,yr));
+    const done=fs.filter(f=>gFieldDone(f.id,yr));
+    const doneAc=gSum(done,f=>f.acres), doneBu=gSum(done,f=>gFieldHarvested(f.id,yr));
+    const head=`<tr><td colspan="6" style="background:var(--g100);font-weight:600;padding:7px 10px">${c.icon} ${c.label}
+      <span style="font-weight:400;color:var(--g700);font-size:12px"> · ${done.length} of ${fs.length} fields done · ${fmt(h)} bu harvested${doneAc>0?` · ${(doneBu/doneAc).toFixed(1)} bu/ac on finished fields`:''}</span></td></tr>`;
+    return head+fs.map(f=>{
+      const hv=gFieldHarvested(f.id,yr),y=gFieldYield(f,yr),dn=gFieldDone(f.id,yr);
+      const diff=y!=null?y-(+f.aph||0):null;
+      return`<tr style="${dn?'':''}">
+        <td style="padding-left:22px">${gEsc(f.name)}</td>
+        <td class="tr db-hide-m">${fmt(f.acres,1)}</td>
+        <td class="tr" style="font-weight:600">${hv?fmt(hv):'—'}</td>
+        <td class="tr">${y!=null?y.toFixed(1):'—'} <span style="font-size:11px;color:var(--g400)">/ ${f.aph||'—'} APH</span></td>
+        <td class="tr" style="color:${diff==null?'var(--g400)':diff>=0?'var(--gm)':'#dc2626'};font-weight:600">${diff!=null?(diff>=0?'+':'')+diff.toFixed(1):'—'}</td>
+        <td class="tc"><input type="checkbox" ${dn?'checked':''} onchange="gToggleDone(${f.id},this.checked)" title="Mark harvest complete"></td>
+      </tr>`;
+    }).join('');
   }).join('');
 
-  return`<div class="g2">${cards}</div>
-    <div class="card"><div class="ch"><div><div class="ct">Harvest by field</div><div class="cs">Yield uses yield-monitor acres when entered · check ✓ when a field is done so its actual bushels replace the APH estimate</div></div></div>
-      <div class="table-scroll"><table><thead><tr><th>Field</th><th>Crop</th><th class="tr">Acres</th><th class="tr">APH</th><th class="tr">Est. bu</th><th class="tr">Harvested</th><th class="tr">Yield/ac</th><th class="tr">vs APH</th><th class="tc">Done</th></tr></thead><tbody>${fRows}</tbody></table></div></div>
-    <div class="card"><div class="ch"><div><div class="ct">Contract deliveries — ${yr}</div><div class="cs">Link a harvest entry or delivery to a contract to track what's left to haul</div></div></div>
-      <div class="table-scroll"><table><thead><tr><th>Date</th><th>Crop</th><th>Type</th><th>Elevator</th><th>Delivery</th><th class="tr">Bushels</th><th class="tr">Delivered</th><th class="tr">Left</th></tr></thead>
-      <tbody>${cRows||'<tr><td colspan="8" style="text-align:center;color:var(--g400);padding:14px">No contracts for this crop year</td></tr>'}</tbody></table></div></div>`;
+  // Contract hauling — only what's still left to deliver (toggle to see filled)
+  const cs=S.contracts.filter(c=>_sameYear(c)).map(c=>{
+    const del=gContractDelivered(c.id),left=Math.max(0,(+c.bu||0)-del);
+    return{c,del,left,filled:left<=0||c.completed};
+  });
+  const open=cs.filter(x=>!x.filled), filled=cs.filter(x=>x.filled);
+  const show=gShowFilled?cs:open;
+  const leftTot=gSum(open,x=>x.left);
+  // Grouped by enterprise, each with its own "left to haul" heading
+  const cRows=GRAIN_CROPS.map(gc=>{
+    const mine=show.filter(x=>x.c.crop===gc.key); if(!mine.length) return '';
+    const openMine=open.filter(x=>x.c.crop===gc.key);
+    const leftMine=gSum(openMine,x=>x.left);
+    const head=`<tr><td colspan="5" style="background:var(--g100);padding:7px 10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 10px">
+        <strong>${gc.icon} ${gc.label}</strong>
+        <span style="font-size:12px;color:var(--g700)">${openMine.length?`<strong>${fmt(leftMine)} bu</strong> left on ${openMine.length} contract${openMine.length===1?'':'s'}`:'<span style="color:var(--gm)">✓ all hauled</span>'}</span>
+      </div></td></tr>`;
+    return head+mine.map(({c,del,left,filled})=>`<tr style="${filled?'opacity:.55':''}">
+      <td style="padding-left:22px">${gEsc(c.elevator||'—')}${c.notes?` <span style="font-size:11px;color:var(--g400)">${gEsc(c.notes)}</span>`:''}</td><td class="db-hide-m" style="color:var(--g400)">${gEsc(c.date)}</td>
+      <td class="tr">${fmt(c.bu)}</td><td class="tr">${del?fmt(del):'—'}</td>
+      <td class="tr" style="font-weight:600;color:${filled?'var(--gm)':'var(--g700)'}">${filled?'✓ done':fmt(left)}</td></tr>`).join('');
+  }).join('');
+
+  return`<div class="card">
+      <div class="ch"><div><div class="ct">Crop position — ${yr}</div><div class="cs">Bushels · bin room = space left in storage bins for that crop</div></div></div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Crop</th><th style="min-width:170px">Harvested</th><th class="tr">In bins</th><th class="tr db-hide-m">Delivered</th><th class="tr db-hide-m">Contracted</th><th class="tr db-hide-m" title="Expected bushels with no contract">Unpriced</th><th class="tr">Bin room</th></tr></thead>
+        <tbody>${cropRows}</tbody></table></div>
+      ${notes.length?`<div class="alert alert-warn" style="margin:12px 0 0;line-height:1.6">${notes.join('<br>')}</div>`:''}
+    </div>
+    <div class="card">
+      <div class="ch"><div><div class="ct">Harvest by field</div><div class="cs">Check ✓ Done when a field is finished so its actual bushels replace the APH estimate</div></div></div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Field</th><th class="tr db-hide-m">Acres</th><th class="tr">Harvested</th><th class="tr">Yield / APH</th><th class="tr">vs APH</th><th class="tc">Done</th></tr></thead>
+        <tbody>${fieldRows}</tbody></table></div>
+    </div>
+    <div class="card">
+      <div class="ch" style="flex-wrap:wrap"><div><div class="ct">Left to haul on contracts</div>
+        <div class="cs">${open.length?`<strong>${fmt(leftTot)} bu</strong> left on ${open.length} contract${open.length===1?'':'s'}`:'Nothing left to haul'}${filled.length?` · ${filled.length} done`:''} · link a harvest line or delivery to a contract to track it</div></div>
+        ${filled.length?`<button class="btn btn-o btn-s" onclick="gShowFilled=!gShowFilled;renderGrain()">${gShowFilled?'Hide done':'Show done ('+filled.length+')'}</button>`:''}</div>
+      ${show.length?`<div class="table-scroll"><table>
+        <thead><tr><th>Elevator</th><th class="db-hide-m">Date</th><th class="tr">Contracted</th><th class="tr">Delivered</th><th class="tr">Left</th></tr></thead>
+        <tbody>${cRows}</tbody></table></div>`:''}
+    </div>
+    ${gUnassignedHtml()}`;
 }
 
+/* ── BINS TAB ──
+   A list instead of cards: one row per bin with a wide fill bar, grouped by
+   crop, so bins are easy to compare top to bottom. */
 function gRenderBins(){
   const g=S.grain;
   const groups=GRAIN_CROPS.filter(c=>g.bins.some(b=>b.crop===c.key));
-  const html=groups.map(c=>{
-    const bins=g.bins.filter(b=>b.crop===c.key);
+  if(!groups.length) return '<div class="card" style="color:var(--g400)">No bins set up yet — see Bin Setup.</div>';
+  const body=groups.map(c=>{
+    const bins=g.bins.filter(b=>b.crop===c.key).sort((a,b)=>(a.type==='overflow')-(b.type==='overflow'));
     const st=bins.filter(b=>b.type==='storage');
     const cap=gSum(st,b=>b.capacity),used=gSum(st,b=>gBinContents(b.id));
-    const cards=bins.map(b=>{
-      const cont=gBinContents(b.id),cap2=+b.capacity||0,p=cap2>0?cont/cap2*100:0;
+    const price=getMtmEffectivePrice(c.key)||getPrice(c.key)||0;
+    const allIn=gSum(bins,b=>Math.max(0,gBinContents(b.id)));
+    const head=`<tr><td colspan="6" style="background:var(--g100);padding:8px 10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px">
+        <strong>${c.icon} ${c.label}</strong>
+        <span style="font-size:12px;color:var(--g700)">Storage <strong>${fmt(used)}</strong> / ${fmt(cap)} bu · <strong style="color:var(--gm)">${fmt(Math.max(0,cap-used))} bu room</strong>${allIn>0&&price>0?` · worth ${fmtD(allIn*price,0)} @ ${fmtD(price,2)}`:''}</span>
+      </div></td></tr>`;
+    const rows=bins.map(b=>{
+      const cont=gBinContents(b.id),cp=+b.capacity||0,p=cp>0?cont/cp*100:0;
       const cls=p>=95?'r':p>=80?'a':'g';
       const yrs=gBinYears(b.id);
       const yrTxt=Object.keys(yrs).sort().map(y=>`${y}: ${fmt(yrs[y])}`).join(' · ');
-      return`<div class="mc">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><strong>${gEsc(b.name)}</strong>${b.type==='overflow'?'<span class="b bx">overflow</span>':''}</div>
-        <div class="pb" style="height:10px;margin:8px 0 4px"><div class="pf ${cls}" style="width:${Math.min(100,Math.max(0,p))}%"></div></div>
-        <div style="font-size:12px;${cont<-0.5?'color:#dc2626;font-weight:600':''}">${fmt(cont)} / ${fmt(cap2)} bu <span style="color:var(--g400)">(${p.toFixed(0)}%)</span></div>
-        ${yrTxt?`<div class="ms">${yrTxt}</div>`:''}</div>`;
+      return`<tr style="${b.type==='overflow'?'color:var(--g700)':''}">
+        <td style="padding-left:22px;white-space:nowrap"><strong>${gEsc(b.name)}</strong>${b.type==='overflow'?' <span class="b bx">overflow</span>':''}</td>
+        <td style="width:38%;min-width:140px">${gBar(p,cls,10)}</td>
+        <td class="tr" style="font-weight:600;${cont<-0.5?'color:#dc2626':''}">${fmt(cont)}</td>
+        <td class="tr db-hide-m" style="color:var(--g400)">${fmt(cp)}</td>
+        <td class="tr">${fmt(Math.max(0,cp-cont))}</td>
+        <td class="db-hide-m" style="font-size:11px;color:var(--g400)">${yrTxt||'empty'}</td>
+      </tr>`;
     }).join('');
-    return`<div class="card"><div class="ch"><div class="ct">${c.icon} ${c.label} bins</div><div class="cs">Storage bins: ${fmt(used)} / ${fmt(cap)} bu · ${fmt(Math.max(0,cap-used))} bu room</div></div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">${cards}</div></div>`;
+    return head+rows;
   }).join('');
-  return(html||'<div class="card" style="color:var(--g400)">No bins set up yet — see Bin Setup.</div>')
-    +`<div class="cs" style="margin-top:4px">Old crop already in a bin? Use <strong>+ Harvest Entry</strong> → "Old crop already in bin" so it counts toward bin space.</div>`;
+  return`<div class="card"><div class="table-scroll"><table>
+      <thead><tr><th>Bin</th><th>Full</th><th class="tr">In bin</th><th class="tr db-hide-m">Capacity</th><th class="tr">Room</th><th class="db-hide-m">Crop year</th></tr></thead>
+      <tbody>${body}</tbody></table></div></div>
+    <div class="cs" style="margin-top:4px">Old crop already in a bin? Use <strong>+ Harvest Entry</strong> → "Old crop already in bin" so it counts toward bin space.</div>`;
 }
 
 function gRenderLog(){
@@ -7794,11 +7857,13 @@ function gRenderLog(){
     return`<tr><td>${gEsc(x.date)}</td><td>${type}</td><td>${x.year}</td><td>${cropLabel(x.crop)}</td><td>${from}</td><td>${to}</td>
       <td class="tr"><span class="ie" onclick="gEditBu('${x._k}',${x.id},this)" style="font-weight:600">${fmt(x.bu)}</span></td>
       <td class="tr">${x.acres?fmt(x.acres,1):'—'}</td><td class="tr">${x.moisture?(+x.moisture).toFixed(1)+'%':'—'}</td>
-      <td style="font-size:11px">${c?gEsc(`${c.elevator||''} ${c.date}`):'—'}</td>
+      <td style="font-size:11px">${(x._k==='del'||x.toType==='buyer')
+        ?`<select class="fi" style="font-size:11px;padding:2px 4px;width:auto;max-width:220px" onchange="gAssignContract('${x._k}',${x.id},this.value)">${gAssignOptions(x.crop,x.contractId)}</select>`
+        :(c?gEsc(`${c.elevator||''} ${c.date}`):'—')}</td>
       <td style="font-size:11px;color:var(--g400)">${gEsc(x.notes||'')}</td>
       <td class="tc"><button class="btn btn-r btn-s" onclick="gDelete('${x._k}',${x.id})">✕</button></td></tr>`;
   }).join('');
-  return`<div class="card"><div class="ch"><div><div class="ct">Harvest &amp; delivery log</div><div class="cs">All crop years · click bushels to correct</div></div></div>
+  return`<div class="card"><div class="ch"><div><div class="ct">Harvest &amp; delivery log</div><div class="cs">All crop years · click bushels to correct · pick a contract on any delivery to assign it</div></div></div>
     <div class="table-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Crop Yr</th><th>Crop</th><th>From</th><th>To</th><th class="tr">Bushels</th><th class="tr">Acres</th><th class="tr">Moist.</th><th>Contract</th><th>Notes</th><th></th></tr></thead>
     <tbody>${rows||'<tr><td colspan="12" style="text-align:center;color:var(--g400);padding:20px">Nothing logged yet. Use + Harvest Entry to start.</td></tr>'}</tbody></table></div></div>`;
 }
@@ -8059,53 +8124,159 @@ function gSaveLoad(){
   save();closeModal();renderGrain();
 }
 
+/* ── DELIVERY FROM BINS ──
+   One entry for a day's hauling: one line per bin. Buyer and contract are
+   optional — deliveries without a contract show up under "Delivered — not
+   assigned to a contract yet" on the Position tab, where you can assign them
+   later (or in the Log). */
+let _gdSeq=0;
 function gOpenDelivery(){
   const g=ensureGrain();
   const bins=g.bins.filter(b=>gBinContents(b.id)>0.5);
   if(!bins.length){alert('No grain in any bin yet. Harvest going straight to town is entered with + Harvest Entry → "Direct to town".');return;}
-  const bOpts=bins.map(b=>{
-    const yrs=gBinYears(b.id);
-    return`<option value="${b.id}">Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)} · ${Object.keys(yrs).sort().map(y=>`${y}: ${fmt(yrs[y])}`).join(', ')}</option>`;
-  }).join('');
   openModal(`
     <div class="fr fr2">
-      <div class="fg"><label class="fl">From bin</label><select class="fi" id="gd-bin" onchange="gDelBinChanged()">${bOpts}</select></div>
       <div class="fg"><label class="fl">Date</label><input class="fi" id="gd-date" type="date" value="${gToday()}"></div>
+      <div class="fg"><label class="fl">Buyer / elevator (optional)</label><input class="fi" id="gd-buyer" list="g-buyer-list" placeholder="e.g. Gold Eagle">${gBuyerList()}</div>
     </div>
-    <div class="fr fr2">
-      <div class="fg"><label class="fl">Crop year of the grain</label><select class="fi" id="gd-year"></select></div>
-      <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="gd-buyer" list="g-buyer-list" placeholder="e.g. Puris">${gBuyerList()}</div>
+    <div class="fg"><label class="fl">Bushels out of each bin</label>
+      <div id="gd-lines"></div>
+      <button class="btn btn-o btn-s" onclick="gdAddLine()" style="margin-top:6px">+ Add another bin</button>
+      <div id="gd-tally" style="font-size:13px;margin-top:8px;font-weight:600"></div>
     </div>
-    <div class="fr fr2">
-      <div class="fg"><label class="fl">Bushels</label><input class="fi" id="gd-bu" type="number" step="any" min="0" style="font-size:15px;font-weight:600"></div>
-      <div class="fg"><label class="fl">Against contract (optional)</label><select class="fi" id="gd-contract">${gContractOptions(false)}</select></div>
-    </div>
+    <div class="fg"><label class="fl">Contract</label><select class="fi" id="gd-contract">${gContractOptions(false)}</select>
+      <div class="cs" style="margin-top:3px">Leave as "assign later" if you're not sure yet — you can assign it on the Position tab or in the Log.</div></div>
     <div class="fg"><label class="fl">Notes</label><input class="fi" id="gd-notes"></div>
-    <button class="btn btn-p" style="margin-top:8px" onclick="gSaveDelivery()">Save delivery</button>`,'Delivery from Bin');
-  gDelBinChanged();
+    <button class="btn btn-p" style="margin-top:8px" onclick="gSaveDelivery()">Save delivery</button>`,'Delivery from Bins');
+  document.getElementById('gd-contract').options[0].text='Assign later';
+  gdAddLine();
 }
-function gDelBinChanged(){
-  const bin=gBin(document.getElementById('gd-bin').value),sel=document.getElementById('gd-year');
-  if(!bin||!sel)return;
-  const yrs=gBinYears(bin.id),keys=Object.keys(yrs).filter(y=>yrs[y]>0.5).sort();
-  sel.innerHTML=keys.map(y=>`<option value="${y}">${y} (${fmt(yrs[y])} bu)</option>`).join('');
+function gdBinOptions(sel){
+  return S.grain.bins.filter(b=>gBinContents(b.id)>0.5||String(b.id)===String(sel)).map(b=>
+    `<option value="${b.id}" ${String(b.id)===String(sel)?'selected':''}>Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)} · ${fmt(gBinContents(b.id))} bu in bin</option>`).join('');
+}
+function gdAddLine(){
+  const box=document.getElementById('gd-lines'); if(!box) return;
+  const div=document.createElement('div'); div.className='gd-line'; div.dataset.id=++_gdSeq;
+  div.style.cssText='display:grid;grid-template-columns:1fr 110px 120px auto;gap:6px;align-items:center;margin-bottom:6px';
+  div.innerHTML=`<select class="fi gd-bin" onchange="gdBinChanged(this)">${gdBinOptions('')}</select>
+    <select class="fi gd-year" title="Crop year of the grain"></select>
+    <input class="fi gd-bu" type="number" step="any" min="0" placeholder="Bushels" oninput="gdTally()" style="font-weight:600">
+    <button class="btn btn-r btn-s" onclick="gdRemoveLine(this)" title="Remove this line">✕</button>`;
+  box.appendChild(div);
+  gdBinChanged(div.querySelector('.gd-bin'));
+}
+function gdRemoveLine(btn){
+  const box=document.getElementById('gd-lines');
+  if(box.querySelectorAll('.gd-line').length<=1){box.querySelector('.gd-bu').value='';gdTally();return;}
+  btn.closest('.gd-line').remove(); gdTally();
+}
+function gdBinChanged(sel){
+  const line=sel.closest('.gd-line'), ys=line.querySelector('.gd-year');
+  const yrs=gBinYears(sel.value), keys=Object.keys(yrs).filter(y=>yrs[y]>0.5).sort();
+  ys.innerHTML=keys.map(y=>`<option value="${y}">${y} crop</option>`).join('')||`<option value="${gYear()}">${gYear()} crop</option>`;
+  if(keys.length) ys.value=keys[keys.length-1];
+  gdTally();
+}
+function gdTally(){
+  const t=document.getElementById('gd-tally'); if(!t) return;
+  const lines=[...document.querySelectorAll('#gd-lines .gd-line')];
+  // Live "bu in bin": subtract what this form is taking out of each bin
+  const out={};
+  lines.forEach(d=>{const b=d.querySelector('.gd-bin').value;out[b]=(out[b]||0)+(parseFloat(d.querySelector('.gd-bu').value)||0);});
+  lines.forEach(d=>[...d.querySelector('.gd-bin').options].forEach(o=>{
+    const b=gBin(o.value); if(!b) return;
+    const left=gBinContents(b.id)-(out[o.value]||0);
+    o.text=`Bin ${b.name} — ${gCropLabel(b.crop)} · ${left<-0.5?fmt(-left)+' bu SHORT':fmt(left)+' bu left in bin'}`;
+  }));
+  const sum=[...document.querySelectorAll('#gd-lines .gd-bu')].reduce((a,i)=>a+(parseFloat(i.value)||0),0);
+  t.textContent=sum?`Total delivered: ${fmt(sum)} bu`:'';
 }
 function gSaveDelivery(){
   const g=ensureGrain();
-  const bin=gBin(document.getElementById('gd-bin').value);
-  const year=document.getElementById('gd-year').value;
-  const bu=parseFloat(document.getElementById('gd-bu').value)||0;
+  const lines=[...document.querySelectorAll('#gd-lines .gd-line')].map(d=>({
+    bin:gBin(d.querySelector('.gd-bin').value), year:d.querySelector('.gd-year').value,
+    bu:parseFloat(d.querySelector('.gd-bu').value)||0
+  })).filter(l=>l.bu>0);
+  if(!lines.length){alert('Enter bushels for at least one bin.');return;}
+  if(lines.some(l=>!l.bin||!l.year)){alert('Pick a bin and crop year on each line.');return;}
+  const contractId=+document.getElementById('gd-contract').value||null;
+  if(contractId){
+    const c=S.contracts.find(x=>x.id===contractId);
+    const wrong=lines.filter(l=>c&&l.bin.crop!==c.crop);
+    if(wrong.length){alert(`That contract is for ${gCropLabel(c.crop)}, but Bin ${wrong[0].bin.name} holds ${gCropLabel(wrong[0].bin.crop)}.\n\nPick a matching contract or "Assign later".`);return;}
+  }
+  // Same bin on two lines: check the combined amount against what's in it
+  const per={};
+  lines.forEach(l=>{const k=l.bin.id+'|'+l.year;per[k]=(per[k]||0)+l.bu;});
+  for(const k in per){
+    const [bid,yr]=k.split('|'), b=gBin(bid), have=gBinContents(bid,yr);
+    if(per[k]>have+0.5&&!confirm(`Bin ${b.name} shows ${fmt(have)} bu of ${yr} grain. Deliver ${fmt(per[k])} bu anyway?`))return;
+  }
   const buyer=document.getElementById('gd-buyer').value.trim();
-  if(!bin||!year){alert('Pick a bin and crop year.');return;}
-  if(bu<=0){alert('Enter bushels.');return;}
-  if(!buyer){alert('Enter the buyer or elevator.');return;}
-  const have=gBinContents(bin.id,year);
-  if(bu>have+0.5&&!confirm(`Bin ${bin.name} shows ${fmt(have)} bu of ${year} grain. Deliver ${fmt(bu)} bu anyway?`))return;
-  if(!g.buyers.includes(buyer))g.buyers.push(buyer);
-  g.deliveries.push({id:nid(g.deliveries),date:document.getElementById('gd-date').value||gToday(),year,crop:bin.crop,
-    fromBin:bin.id,to:buyer,bu,contractId:+document.getElementById('gd-contract').value||null,
-    notes:document.getElementById('gd-notes').value.trim()});
+  if(buyer&&!g.buyers.includes(buyer))g.buyers.push(buyer);
+  const date=document.getElementById('gd-date').value||gToday(), notes=document.getElementById('gd-notes').value.trim();
+  const entryId=Date.now();
+  lines.forEach(l=>g.deliveries.push({id:nid(g.deliveries),entryId,date,year:l.year,crop:l.bin.crop,
+    fromBin:l.bin.id,to:buyer||'Town',bu:l.bu,contractId,notes}));
   save();closeModal();renderGrain();
+}
+
+/* ── ASSIGN TO A CONTRACT LATER ──
+   Works for deliveries from bins and harvest lines sent straight to town.
+   If the delivery is bigger than what's left on the contract, it offers to
+   split it: the contract gets what it needs, the rest stays unassigned. */
+function gContractLeft(c){return Math.max(0,(+c.bu||0)-gContractDelivered(c.id));}
+function gAssignOptions(crop,selId){
+  // Any contract for this crop that still has bushels not matched to a load — including
+  // ones already checked ✓ Delivered in Marketing (e.g. a cash sale you logged there).
+  const cs=S.contracts.filter(c=>c.crop===crop&&(gContractLeft(c)>0.5||c.id===+selId))
+    .sort((a,b)=>String(a.year).localeCompare(String(b.year))||String(a.date).localeCompare(String(b.date)));
+  return`<option value="">— not assigned —</option>`+cs.map(c=>`<option value="${c.id}" ${c.id===+selId?'selected':''}>${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||'Contract')}${c.notes?' · '+gEsc(c.notes):''} · ${gEsc(c.date)} · ${fmt(c.bu)} bu${gContractLeft(c)<c.bu-0.5&&gContractLeft(c)>0.5?' ('+fmt(gContractLeft(c))+' unmatched)':''}${c.completed?' · ✓':''}${String(c.year)!==String(S.activeYear)?' · '+c.year:''}</option>`).join('');
+}
+function gAssignContract(kind,id,val){
+  const g=S.grain, arr=kind==='del'?g.deliveries:g.loads;
+  const x=arr.find(r=>r.id===+id); if(!x) return;
+  const cid=+val||null;
+  if(cid){
+    const c=S.contracts.find(k=>k.id===cid);
+    const left=(+c.bu||0)-gContractDelivered(c.id)+(x.contractId===cid?(+x.bu||0):0);
+    if(x.bu>left+0.5&&left>0.5){
+      const split=confirm(`This delivery is ${fmt(x.bu)} bu but the contract only has ${fmt(left)} bu left.\n\nOK = split it: ${fmt(left)} bu to this contract, ${fmt(x.bu-left)} bu stays unassigned.\nCancel = assign all ${fmt(x.bu)} bu anyway.`);
+      if(split){
+        const rest=x.bu-left, copy={...x,id:nid(arr),contractId:null,bu:rest};
+        if(x.acres){copy.acres=Math.round(x.acres*rest/x.bu*100)/100; x.acres=Math.round((x.acres-copy.acres)*100)/100;}
+        x.bu=left; arr.push(copy);
+      }
+    }
+  }
+  x.contractId=cid;
+  save(); renderGrain();
+}
+// Deliveries and town loads with no contract yet, grouped by crop
+function gUnassignedHtml(){
+  const g=S.grain;
+  const items=[
+    ...g.deliveries.filter(d=>!d.contractId).map(d=>({...d,_k:'del',src:'Bin '+((gBin(d.fromBin)||{}).name||'?')})),
+    ...g.loads.filter(l=>l.toType==='buyer'&&!l.contractId).map(l=>{const f=(S.fields||[]).find(ff=>ff.id===+l.fieldId);return{...l,_k:'load',src:f?f.name:'Field'};}),
+  ].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!items.length) return '';
+  const rows=GRAIN_CROPS.map(gc=>{
+    const mine=items.filter(x=>x.crop===gc.key); if(!mine.length) return '';
+    return`<tr><td colspan="4" style="background:var(--g100);padding:7px 10px"><strong>${gc.icon} ${gc.label}</strong>
+        <span style="font-size:12px;color:var(--g700)"> · ${fmt(gSum(mine,x=>x.bu))} bu not assigned</span></td></tr>`
+      +mine.map(x=>`<tr>
+        <td style="padding-left:22px">${gEsc(x.date)} <span style="font-size:11px;color:var(--g400)">${gEsc(x.src)} → ${gEsc(x.to||'Town')}${x.year!==gYear()?' · '+x.year+' crop':''}</span></td>
+        <td class="tr" style="font-weight:600">${fmt(x.bu)}</td>
+        <td colspan="2"><select class="fi" style="font-size:12px;padding:4px 6px" onchange="gAssignContract('${x._k}',${x.id},this.value)">${gAssignOptions(x.crop,null)}</select></td>
+      </tr>`).join('');
+  }).join('');
+  return`<div class="card">
+    <div class="ch"><div><div class="ct">Delivered — not assigned to a contract yet</div>
+      <div class="cs">Pick a contract for each one when you know where it applies · bushels already count as delivered</div></div></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Delivery</th><th class="tr">Bushels</th><th colspan="2">Assign to contract</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
 }
 
 /* ── EDITS ── */
