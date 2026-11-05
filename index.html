@@ -359,7 +359,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
     <div class="ni" onclick="nav('overhead',this)"><span class="ic">🏠</span><span>Overhead</span></div>
   </div>
   <div class="nsec">
-    <div class="ni" onclick="nav('reports',this)"><span class="ic">📈</span><span>Field Cost Report</span></div>
+    <div class="ni" onclick="nav('reports',this)"><span class="ic">📈</span><span>Reports</span></div>
     <div class="ni" onclick="nav('settings',this)"><span class="ic">⚙️</span><span>Settings</span></div>
   </div>
   <!-- Pages not in regular use: kept (nothing deleted), tucked behind a toggle -->
@@ -408,7 +408,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   <div class="mm-item" onclick="bnNav('loans',null);closeMoreMenu()"><span class="mm-ic">🏦</span>Loans</div>
   <div class="mm-item" onclick="bnNav('equipment',null);closeMoreMenu()"><span class="mm-ic">🚜</span>Machinery</div>
   <div class="mm-item" onclick="bnNav('overhead',null);closeMoreMenu()"><span class="mm-ic">🏠</span>Overhead</div>
-  <div class="mm-item" onclick="bnNav('reports',null);closeMoreMenu()"><span class="mm-ic">📈</span>Field Cost Report</div>
+  <div class="mm-item" onclick="bnNav('reports',null);closeMoreMenu()"><span class="mm-ic">📈</span>Reports</div>
   <div class="mm-item" onclick="bnNav('settings',null);closeMoreMenu()"><span class="mm-ic">⚙️</span>Settings</div>
   <div class="mm-item" onclick="toggleMmMoreTools()" style="color:rgba(255,255,255,.45);font-size:12px"><span class="mm-ic">⋯</span>More tools <span id="mm-more-arrow" style="margin-left:4px">▸</span></div>
   <div id="mm-more-tools" style="display:none">
@@ -569,7 +569,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 
 <!-- REPORTS -->
 <div id="page-reports" class="page">
-  <div class="topbar"><div><h1>Field Cost Report</h1><div class="sub">Cost and return by field · use 🖨 Print on each table</div></div>
+  <div class="topbar"><div><h1>Reports</h1><div class="sub">Cost and return by field and by enterprise · use 🖨 Print on each table</div></div>
   </div>
   <div class="content">
     <!-- Only Field Cost Detail + its Metric Guide are in use. The other reports are kept but hidden
@@ -582,6 +582,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
       <div class="tab" id="rt-marketing" onclick="showRepTab('marketing',this)" style="display:none">Mkt Coverage</div>
       <div class="tab" id="rt-pcmars" onclick="showRepTab('pcmars',this)" style="display:none">PCMARS Reconcile</div>
       <div class="tab" id="rt-fieldcost" onclick="showRepTab('fieldcost',this)">📋 Field Cost Detail</div>
+      <div class="tab" id="rt-enterprise" onclick="showRepTab('enterprise',this)">📊 Enterprise Summary</div>
       <div class="tab" id="rt-fieldnotes" onclick="showRepTab('fieldnotes',this)">📖 Metric Guide</div>
     </div>
     <div id="rep-fullcost-view"></div>
@@ -590,6 +591,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
     <div id="rep-marketing-view" style="display:none"></div>
     <div id="rep-pcmars-view" style="display:none"></div>
     <div id="rep-fieldcost-view" style="display:none"></div>
+    <div id="rep-enterprise-view" style="display:none"></div>
     <div id="rep-fieldnotes-view" style="display:none"></div>
   </div>
 </div>
@@ -4584,7 +4586,7 @@ function renderReports(){
 }
 function showRepTab(tab,el){
   activeRepTab=tab;
-  ['fullcost','saledecision','breakeven','marketing','pcmars','fieldcost','fieldnotes'].forEach(t=>{
+  ['fullcost','saledecision','breakeven','marketing','pcmars','fieldcost','enterprise','fieldnotes'].forEach(t=>{
     document.getElementById('rep-'+t+'-view').style.display=t===tab?'block':'none';
     const te=document.getElementById('rt-'+t);if(te)te.classList.toggle('active',t===tab);
   });
@@ -4597,6 +4599,7 @@ function renderRepTab(tab){
   else if(tab==='marketing')renderRepMarketing();
   else if(tab==='pcmars')renderRepPcmars();
   else if(tab==='fieldcost')renderRepFieldCost();
+  else if(tab==='enterprise')renderRepEnterprise();
   else if(tab==='fieldnotes')renderRepFieldNotes();
 }
 function getOverheadPerAcre(){
@@ -5107,7 +5110,22 @@ function getBlendedPrice(cropType){
   return (soldRevCapped + remBu * effPrice) / totalBu;
 }
 
-function renderRepFieldCost(){
+/* ══════════ FIELD COST MODEL ══════════
+   fcModel() holds the per-field math behind the Field Cost Detail report.
+   The Enterprise Summary report uses the exact same numbers, just added up by
+   enterprise, so the two reports always agree. */
+let repUnit = localStorage.getItem('fpm_rep_unit') || 'pa'; // 'pa' = $/acre, 'tot' = total $
+function setRepUnit(u){
+  repUnit = u;
+  try{ localStorage.setItem('fpm_rep_unit', u); }catch(e){}
+  renderRepTab(activeRepTab);
+}
+function repUnitToggle(){
+  const b=(u,l)=>`<button onclick="setRepUnit('${u}')" style="padding:6px 14px;border:none;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:600;${repUnit===u?'background:var(--gm);color:#fff':'background:#fff;color:var(--g700)'}">${l}</button>`;
+  return `<div style="display:inline-flex;border:1px solid var(--g200);border-radius:var(--r);overflow:hidden;flex-shrink:0" title="Switch between per-acre and total dollars">${b('pa','$ / acre')}${b('tot','Total $')}</div>`;
+}
+
+function fcModel(){
   const yr = S.settings.year;
   const ohPA = getOverheadPerAcre();
   const dsPA = getDebtServicePerAcre();
@@ -5187,10 +5205,22 @@ function renderRepFieldCost(){
       const varPerBu = fYield(f) > 0 ? varPA / fYield(f) : 0;
       const groups = {};
       for(const g of CAT_GROUPS) groups[g.key] = calcCatCPA(f, g.cats);
+      // Plan lines whose category isn't in the list above — so the category rows
+      // always add up to Total Variable Costs
+      groups.other = varPA - CAT_GROUPS.reduce((s,g)=>s+groups[g.key],0);
+      if(Math.abs(groups.other) < 0.005) groups.other = 0;
       return { f, price, revPA, landPA, varPA, cmPA, cmPct, fullCostPA, opMarginPA,
                roi, bePrice, rentPctRev, varPerBu, groups };
     });
   }
+  return { yr, ohPA, ohGroupPA, CAT_GROUPS, blendedPrices, buildFieldData };
+}
+
+function renderRepFieldCost(){
+  const { yr, ohPA, ohGroupPA, CAT_GROUPS, blendedPrices, buildFieldData } = fcModel();
+  const cornFields = S.fields.filter(f=>f.crop==='corn');
+  const soyFields  = S.fields.filter(f=>f.crop!=='corn');
+  const isTot = repUnit==='tot';
 
   const cornData = buildFieldData(cornFields);
   const soyData  = buildFieldData(soyFields);
@@ -5236,17 +5266,21 @@ function renderRepFieldCost(){
     function divRow(){ return `<tr><td colspan="${nc}" style="padding:0;height:1px;background:#e2e8f0"></td></tr>`; }
 
     function dataRow(labelText, valFn, opts={}){
-      const {bold=false, fmt2=v=>fmtD(v,2), colorFn=null, indent=false, bg=''} = opts;
-      const avg = wAvg(fds, valFn);
+      const {bold=false, fmt2=v=>fmtD(v,2), colorFn=null, indent=false, bg='', noScale=false} = opts;
+      // Total $ mode: dollar-per-acre rows × field acres; last column = sum
+      const tot = isTot && !noScale;
+      const vf = tot ? d=>valFn(d)*(+d.f.acres||0) : valFn;
+      const f2 = tot ? v=>fmtD(v,0) : fmt2;
+      const avg = tot ? fds.reduce((s,d)=>s+vf(d),0) : wAvg(fds, valFn);
       const avgColor = colorFn ? colorFn(avg) : '';
       return `<tr>
-        ${lbl(labelText, {bold, indent, bg})}
+        ${lbl(tot?labelText.replace(' / Ac',''):labelText, {bold, indent, bg})}
         ${fds.map(d=>{
-          const v = valFn(d);
+          const v = vf(d);
           const col = colorFn ? colorFn(v) : '';
-          return td(fmt2(v), {bold, color:col, bg});
+          return td(f2(v), {bold, color:col, bg});
         }).join('')}
-        ${tdavg(fmt2(avg), {bold, color:avgColor})}
+        ${tdavg(f2(avg), {bold, color:avgColor})}
       </tr>`;
     }
 
@@ -5255,7 +5289,7 @@ function renderRepFieldCost(){
       <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid #334155">
         <div>
           <div style="font-size:16px;font-weight:800;color:#1e293b">${farmName} — Field Cost Detail</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px">${cropEmoji} ${cropLabel} · ${yr2} Crop Year · Full Season Projected · ${fmt(totAcCrop,0)} acres</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">${cropEmoji} ${cropLabel} · ${yr2} Crop Year · Full Season Projected · ${fmt(totAcCrop,0)} acres · ${isTot?'Total dollars':'Dollars per acre'}</div>
         </div>
         <div style="text-align:right;font-size:10px;color:#64748b">
           <div>Blended Price: <strong>${fmtD(bPrice,3)}/bu</strong></div>
@@ -5271,33 +5305,33 @@ function renderRepFieldCost(){
               <div style="font-size:10px;font-weight:700;color:#1e293b">${d.f.name}</div>
               <div style="font-size:9px;font-weight:400;color:#94a3b8">${fmt(d.f.acres,1)}ac · ${fYield(d.f).toFixed(1)}bu ${fYieldSource(d.f)==='actual'?'✓':fYieldSource(d.f)==='est'?'est':''}</div>
             </th>`).join('')}
-            ${avgph('Farm Avg')}
+            ${avgph(isTot?'Total':'Farm Avg')}
           </tr>
         </thead>
         <tbody>
           ${secRow('Revenue')}
-          ${dataRow('Blended Price ($/bu)', d=>d.price, {fmt2:v=>fmtD(v,3)})}
+          ${dataRow('Blended Price ($/bu)', d=>d.price, {fmt2:v=>fmtD(v,3), noScale:true})}
           ${dataRow('Revenue / Ac', d=>d.revPA, {bold:true})}
           ${divRow()}
           ${secRow('Variable Costs')}
-          ${CAT_GROUPS.map(g=>dataRow(g.label, d=>d.groups[g.key])).join('')}
+          ${CAT_GROUPS.map(g=>dataRow(g.label, d=>d.groups[g.key])).join('')}${fds.some(d=>d.groups.other)?dataRow('Other', d=>d.groups.other):''}
           ${divRow()}
           ${dataRow('Total Variable Costs', d=>d.varPA, {bold:true})}
-          ${dataRow('Variable Cost / Bu', d=>d.varPerBu, {fmt2:v=>fmtD(v,2), indent:true})}
+          ${dataRow('Variable Cost / Bu', d=>d.varPerBu, {fmt2:v=>fmtD(v,2), indent:true, noScale:true})}
           ${divRow()}
           ${secRow('Structure Costs')}
           ${dataRow('Land Rent', d=>d.landPA, {})}
-          ${dataRow('Rent as % of Revenue', d=>d.rentPctRev, {fmt2:v=>(v*100).toFixed(1)+'%'})}
+          ${dataRow('Rent as % of Revenue', d=>d.rentPctRev, {fmt2:v=>(v*100).toFixed(1)+'%', noScale:true})}
           ${ohGroupPA.map(g=>dataRow(g.label+' (OH)', ()=>g.perAc, {})).join('')}
           ${dataRow('Machinery', d=>machPA(d.f.crop), {})}
           ${dataRow('Full Cost / Ac', d=>d.fullCostPA, {bold:true})}
           ${divRow()}
           ${secRow('Profitability')}
           ${dataRow('Contribution Margin / Ac', d=>d.cmPA, {bold:true, colorFn:signColor})}
-          ${dataRow('CM Ratio', d=>d.cmPct, {fmt2:v=>(v*100).toFixed(1)+'%', colorFn:signColor})}
+          ${dataRow('CM Ratio', d=>d.cmPct, {fmt2:v=>(v*100).toFixed(1)+'%', colorFn:signColor, noScale:true})}
           ${dataRow('Operating Margin / Ac', d=>d.opMarginPA, {bold:true, colorFn:signColor})}
-          ${dataRow('ROI', d=>d.roi, {bold:true, fmt2:v=>(v*100).toFixed(1)+'%', colorFn:roiColor})}
-          ${dataRow('Break-Even Price ($/bu)', d=>d.bePrice, {fmt2:v=>fmtD(v,2)})}
+          ${dataRow('ROI', d=>d.roi, {bold:true, fmt2:v=>(v*100).toFixed(1)+'%', colorFn:roiColor, noScale:true})}
+          ${dataRow('Break-Even Price ($/bu)', d=>d.bePrice, {fmt2:v=>fmtD(v,2), noScale:true})}
         </tbody>
       </table>
       <div style="font-size:9px;color:#94a3b8;margin-top:6px">Full cost = variable costs + land rent + overhead + machinery (charged by crop from the Machinery cost center; includes depreciation, not loan principal).</div>
@@ -5318,17 +5352,21 @@ function renderRepFieldCost(){
     function divRow(){ return `<tr><td colspan="${nc}" style="padding:0;height:1px;background:#e2e8f0"></td></tr>`; }
 
     function dataRow(labelText, valFn, opts={}){
-      const {bold=false, fmt2=v=>fmtD(v,2), colorFn=null, indent=false} = opts;
-      const avg = wAvg(fds, valFn);
+      const {bold=false, fmt2=v=>fmtD(v,2), colorFn=null, indent=false, noScale=false} = opts;
+      // Total $ mode: dollar-per-acre rows × field acres; last column = sum
+      const tot = isTot && !noScale;
+      const vf = tot ? d=>valFn(d)*(+d.f.acres||0) : valFn;
+      const f2 = tot ? v=>fmtD(v,0) : fmt2;
+      const avg = tot ? fds.reduce((s,d)=>s+vf(d),0) : wAvg(fds, valFn);
       const avgColor = colorFn ? colorFn(avg) : '';
       return `<tr>
-        <td style="padding:5px 8px;font-size:12px;${bold?'font-weight:700':''}${indent?';padding-left:20px':''}white-space:nowrap">${labelText}</td>
+        <td style="padding:5px 8px;font-size:12px;${bold?'font-weight:700':''}${indent?';padding-left:20px':''}white-space:nowrap">${tot?labelText.replace(' / Ac',''):labelText}</td>
         ${fds.map(d=>{
-          const v = valFn(d);
+          const v = vf(d);
           const col = colorFn ? colorFn(v) : '';
-          return `<td class="tr" style="padding:5px 8px;font-size:12px;${bold?'font-weight:700':''}${col?';'+col:''}">${fmt2(v)}</td>`;
+          return `<td class="tr" style="padding:5px 8px;font-size:12px;${bold?'font-weight:700':''}${col?';'+col:''}">${f2(v)}</td>`;
         }).join('')}
-        <td class="tr" style="padding:5px 8px;font-size:12px;background:#f1f5f9;font-weight:700${avgColor?';'+avgColor:''}">${fmt2(avg)}</td>
+        <td class="tr" style="padding:5px 8px;font-size:12px;background:#f1f5f9;font-weight:700${avgColor?';'+avgColor:''}">${f2(avg)}</td>
       </tr>`;
     }
 
@@ -5354,35 +5392,35 @@ function renderRepFieldCost(){
             <div style="font-size:10px;font-weight:400;color:#94a3b8">${fmt(d.f.acres,1)} ac · ${fYieldCell(d.f)}</div>
           </th>`).join('')}
           <th style="text-align:right;padding:8px 8px;min-width:80px;background:#f1f5f9;border-bottom:2px solid #334155">
-            <div style="font-size:11px;font-weight:700;color:#475569">Farm Avg</div>
-            <div style="font-size:10px;font-weight:400;color:#94a3b8">wtd $/ac</div>
+            <div style="font-size:11px;font-weight:700;color:#475569">${isTot?'Total':'Farm Avg'}</div>
+            <div style="font-size:10px;font-weight:400;color:#94a3b8">${isTot?'all fields':'wtd $/ac'}</div>
           </th>
         </tr>
       </thead>
       <tbody>
         ${secRow('Revenue')}
-        ${dataRow('Blended Price ($/bu)', d=>d.price, {fmt2:v=>fmtD(v,3)})}
+        ${dataRow('Blended Price ($/bu)', d=>d.price, {fmt2:v=>fmtD(v,3), noScale:true})}
         ${dataRow('Revenue / Ac', d=>d.revPA, {bold:true})}
         ${divRow()}
         ${secRow('Variable Costs')}
-        ${CAT_GROUPS.map(g=>dataRow(g.label, d=>d.groups[g.key])).join('')}
+        ${CAT_GROUPS.map(g=>dataRow(g.label, d=>d.groups[g.key])).join('')}${fds.some(d=>d.groups.other)?dataRow('Other', d=>d.groups.other):''}
         ${divRow()}
         ${dataRow('Total Variable Costs', d=>d.varPA, {bold:true})}
-        ${dataRow('Variable Cost / Bu', d=>d.varPerBu, {fmt2:v=>fmtD(v,2), indent:true})}
+        ${dataRow('Variable Cost / Bu', d=>d.varPerBu, {fmt2:v=>fmtD(v,2), indent:true, noScale:true})}
         ${divRow()}
         ${secRow('Structure Costs')}
         ${dataRow('Land Rent', d=>d.landPA, {})}
-        ${dataRow('Rent as % of Revenue', d=>d.rentPctRev, {fmt2:v=>(v*100).toFixed(1)+'%'})}
+        ${dataRow('Rent as % of Revenue', d=>d.rentPctRev, {fmt2:v=>(v*100).toFixed(1)+'%', noScale:true})}
         ${ohGroupPA.map(g=>dataRow(g.label, ()=>g.perAc, {indent:true})).join('')}
         ${dataRow('Machinery', d=>machPA(d.f.crop), {indent:true})}
         ${dataRow('Full Cost / Ac', d=>d.fullCostPA, {bold:true})}
         ${divRow()}
         ${secRow('Profitability')}
         ${dataRow('Contribution Margin / Ac', d=>d.cmPA, {bold:true, colorFn:signColor})}
-        ${dataRow('CM Ratio', d=>d.cmPct, {fmt2:v=>(v*100).toFixed(1)+'%', colorFn:signColor})}
+        ${dataRow('CM Ratio', d=>d.cmPct, {fmt2:v=>(v*100).toFixed(1)+'%', colorFn:signColor, noScale:true})}
         ${dataRow('Operating Margin / Ac', d=>d.opMarginPA, {bold:true, colorFn:signColor})}
-        ${dataRow('ROI', d=>d.roi, {bold:true, fmt2:v=>(v*100).toFixed(1)+'%', colorFn:roiColor})}
-        ${dataRow('Break-Even Price ($/bu)', d=>d.bePrice, {fmt2:v=>fmtD(v,2)})}
+        ${dataRow('ROI', d=>d.roi, {bold:true, fmt2:v=>(v*100).toFixed(1)+'%', colorFn:roiColor, noScale:true})}
+        ${dataRow('Break-Even Price ($/bu)', d=>d.bePrice, {fmt2:v=>fmtD(v,2), noScale:true})}
       </tbody>
       </table>
       </div>
@@ -5400,27 +5438,160 @@ function renderRepFieldCost(){
   const totOpPA   = wAvg(allData, d=>d.opMarginPA);
   const totROI    = wAvg(allData, d=>d.roi);
 
+  // In Total $ mode the cards show whole-farm dollars (per-acre avg × total acres)
+  const k = isTot ? totAc : 1;
   const summaryCards = `<div class="mg6" style="margin-bottom:20px">
     <div class="mc"><div class="ml">Total Acres</div><div class="mv">${fmt(totAc,0)}</div></div>
-    <div class="mc blue"><div class="ml">Avg Revenue / Ac</div><div class="mv">${fmtD(totRevPA,0)}</div></div>
-    <div class="mc amber"><div class="ml">Avg Variable Cost / Ac</div><div class="mv">${fmtD(totVarPA,0)}</div></div>
-    <div class="mc ${totCMPA>=0?'green':'red'}"><div class="ml">Avg Contribution Margin</div><div class="mv">${fmtD(totCMPA,0)}</div><div class="ms">CM% ${(totCMPct*100).toFixed(1)}%</div></div>
-    <div class="mc ${totOpPA>=0?'green':'red'}"><div class="ml">Avg Operating Margin</div><div class="mv">${fmtD(totOpPA,0)}</div></div>
+    <div class="mc blue"><div class="ml">${isTot?'Total Revenue':'Avg Revenue / Ac'}</div><div class="mv">${fmtD(totRevPA*k,0)}</div></div>
+    <div class="mc amber"><div class="ml">${isTot?'Total Variable Cost':'Avg Variable Cost / Ac'}</div><div class="mv">${fmtD(totVarPA*k,0)}</div></div>
+    <div class="mc ${totCMPA>=0?'green':'red'}"><div class="ml">${isTot?'Contribution Margin':'Avg Contribution Margin'}</div><div class="mv">${fmtD(totCMPA*k,0)}</div><div class="ms">CM% ${(totCMPct*100).toFixed(1)}%</div></div>
+    <div class="mc ${totOpPA>=0?'green':'red'}"><div class="ml">${isTot?'Operating Margin':'Avg Operating Margin'}</div><div class="mv">${fmtD(totOpPA*k,0)}</div></div>
     <div class="mc ${totROI>=0?'green':'red'}"><div class="ml">Farm ROI</div><div class="mv">${(totROI*100).toFixed(1)}%</div></div>
   </div>`;
 
   document.getElementById('rep-fieldcost-view').innerHTML = `
     <div class="card">
-      <div class="ch" style="margin-bottom:4px">
+      <div class="ch" style="margin-bottom:4px;flex-wrap:wrap">
         <div>
           <div class="ct">📋 Field Cost Detail — ${yr}</div>
           <div class="cs">Full-season projected · all planned inputs at planned rates · blended prices from marketing position · overhead allocated equally per acre</div>
         </div>
+        ${repUnitToggle()}
       </div>
       ${summaryCards}
       ${buildTable(cornData, 'Corn Fields', '🌽', 'print-corn-data')}
       ${buildTable(soyData,  'Soybean Fields', '🌱', 'print-soy-data')}
     </div>`;
+}
+
+/* ══════════ ENTERPRISE SUMMARY REPORT ══════════
+   Same per-field numbers as Field Cost Detail (fcModel), added up by enterprise.
+   Every dollar row is summed as total $ first; $/acre = total ÷ enterprise acres. */
+function renderRepEnterprise(){
+  const M = fcModel();
+  const all = M.buildFieldData(S.fields);
+  const isTot = repUnit==='tot';
+  const yr = M.yr;
+  const COLS = [
+    {label:'Corn',          crops:['corn']},
+    {label:'SB Commercial', crops:['soy-commercial']},
+    {label:'SB Non-GMO',    crops:['soy-nongmo']},
+    {label:'SB Renwick',    crops:['soy-renwick']},
+    {label:'All Soybeans',  crops:SOY_CROPS, sub:true},
+    {label:'Whole Farm',    crops:['corn',...SOY_CROPS], sub:true, mixed:true}, // corn + soy bushels can't be added: per-bu rows show —
+  ];
+  const soyOpen = localStorage.getItem('fpm_ent_soy_open')!=='0'; // soybean type columns shown?
+  const cols = COLS.filter(c=>soyOpen||!(c.crops.length===1&&c.crops[0].startsWith('soy'))).map(c=>{
+    const ds = all.filter(d=>c.crops.includes(d.f.crop));
+    const ac = ds.reduce((s,d)=>s+(+d.f.acres||0),0);
+    const T = fn=>ds.reduce((s,d)=>s+fn(d)*(+d.f.acres||0),0); // per-acre value → total $
+    const g = {};
+    M.CAT_GROUPS.forEach(x=>g[x.key]=T(d=>d.groups[x.key]));
+    g.other = T(d=>d.groups.other);
+    // Sold (contracted) vs unsold — per crop, then added up. If a crop is oversold,
+    // only its expected bushels count, at the average contract price (same cap as
+    // getBlendedPrice), so Sold + Unsold always equals Revenue.
+    let sold=0, soldRev=0;
+    c.crops.forEach(k=>{
+      const fb=ds.filter(d=>d.f.crop===k).reduce((s,d)=>s+fYield(d.f)*(+d.f.acres||0),0);
+      const st=contractStats(k);
+      sold+=st.bu;
+      soldRev+= (st.bu>fb&&st.bu>0) ? st.rev*(fb/st.bu) : st.rev;
+    });
+    return {...c, ac, n:ds.length, sold, soldRev,
+      bu:T(d=>fYield(d.f)), rev:T(d=>d.revPA), vari:T(d=>d.varPA), land:T(d=>d.landPA),
+      mach:T(d=>machPA(d.f.crop)), full:T(d=>d.fullCostPA), cm:T(d=>d.cmPA), op:T(d=>d.opMarginPA),
+      oh:M.ohGroupPA.map(o=>o.perAc*ac), g};
+  }).filter(c=>c.ac>0);
+
+  const el = document.getElementById('rep-enterprise-view');
+  if(!cols.length){ el.innerHTML='<div class="card" style="text-align:center;color:var(--g400)">No fields for this crop year yet.</div>'; return; }
+
+  const pos = v=>v>=0?'color:#166534':'color:#c0392b';
+  const roiCol = v=>v>=0.05?'color:#166534':v>=0?'color:#b7770d':'color:#c0392b';
+  const div = (a,b)=>b?a/b:0;
+  const nc = cols.length+1;
+  const cellBg = c=>c.sub?'background:#f1f5f9;':'';
+  // money row: fn returns total $; shown as $/ac or total $ depending on the switch
+  const money = (label,fn,o={})=>row(label, c=>{const v=fn(c);return isTot?v:div(v,c.ac);}, isTot?v=>fmtD(v,0):v=>fmtD(v,2), o);
+  // plain row: same in both modes (prices, %, counts)
+  const plain = (label,fn,f,o={})=>row(label, fn, f, o);
+  function row(label, valFn, f, o={}){
+    return `<tr>
+      <td style="padding:6px 10px;font-size:12px;white-space:nowrap;${o.bold?'font-weight:700;':''}${o.indent?'padding-left:22px;':''}">${label}</td>
+      ${cols.map(c=>{if(o.perBu&&c.mixed)return`<td class="tr" style="padding:6px 10px;font-size:12px;color:#94a3b8;${cellBg(c)}">—</td>`;const v=valFn(c);return`<td class="tr" style="padding:6px 10px;font-size:12px;${cellBg(c)}${o.bold?'font-weight:700;':''}${o.color?o.color(v):''}">${f(v)}</td>`;}).join('')}
+    </tr>`;
+  }
+  const sec = t=>`<tr><td colspan="${nc}" style="background:#2d3748;color:#e2e8f0;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px">${t}</td></tr>`;
+  const anyOther = cols.some(c=>Math.abs(c.g.other)>0.5);
+
+  el.innerHTML = `<div class="card">
+    <div class="ch" style="flex-wrap:wrap">
+      <div><div class="ct">📊 Enterprise Summary — ${yr}</div>
+        <div class="cs">Same numbers as Field Cost Detail, added up by enterprise · ${isTot?'total dollars':'dollars per acre'}</div></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-o btn-s" onclick="toggleEntSoy()">${soyOpen?'Hide soybean types':'Show soybean types'}</button>
+        ${repUnitToggle()}
+        <button class="btn btn-o btn-s" onclick="printEnterprise()">🖨 Print</button></div>
+    </div>
+    <div id="ent-print">
+    <div style="overflow-x:auto;border-radius:8px;border:1px solid #e2e8f0">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#f8fafc">
+        <th style="text-align:left;padding:8px 10px;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;border-bottom:2px solid #334155;min-width:150px">${isTot?'Total $':'$ per acre'}</th>
+        ${cols.map(c=>`<th style="text-align:right;padding:8px 10px;min-width:95px;border-bottom:2px solid #334155;${cellBg(c)}${c.label==='All Soybeans'?'cursor:pointer;':''}"${c.label==='All Soybeans'?` onclick="toggleEntSoy()" title="${soyOpen?'Hide':'Show'} soybean types"`:''}>
+          <div style="font-size:12px;font-weight:700;color:#1e293b">${c.label==='All Soybeans'?(soyOpen?'◂ ':'▸ '):''}${c.label}</div>
+          <div style="font-size:10px;font-weight:400;color:#94a3b8">${fmt(c.ac,0)} ac · ${c.n} field${c.n===1?'':'s'}</div></th>`).join('')}
+      </tr></thead>
+      <tbody>
+        ${sec('Production')}
+        ${plain('Acres', c=>c.ac, v=>fmt(v,1))}
+        ${plain('Yield (bu/ac)', c=>div(c.bu,c.ac), v=>v.toFixed(1), {perBu:true})}
+        ${plain('Total bushels', c=>c.bu, v=>fmt(v,0), {perBu:true})}
+        ${sec('Revenue')}
+        ${plain('Sold bushels (contracted)', c=>c.sold, v=>fmt(v,0), {perBu:true})}
+        ${money('Sold revenue', c=>c.soldRev, {indent:true})}
+        ${plain('Unsold bushels', c=>Math.max(0,c.bu-c.sold), v=>fmt(v,0), {perBu:true})}
+        ${money('Unsold @ today\'s market', c=>c.rev-c.soldRev, {indent:true})}
+        ${plain('% of revenue locked in', c=>div(c.soldRev,c.rev), v=>(v*100).toFixed(0)+'%', {bold:true})}
+        ${plain('Blended Price ($/bu)', c=>div(c.rev,c.bu), v=>fmtD(v,3), {perBu:true})}
+        ${money('Revenue', c=>c.rev, {bold:true})}
+        ${sec('Variable Costs')}
+        ${M.CAT_GROUPS.map(x=>money(x.label, c=>c.g[x.key])).join('')}
+        ${anyOther?money('Other', c=>c.g.other):''}
+        ${money('Total Variable Costs', c=>c.vari, {bold:true})}
+        ${plain('Variable Cost / Bu', c=>div(c.vari,c.bu), v=>fmtD(v,2), {indent:true, perBu:true})}
+        ${sec('Structure Costs')}
+        ${money('Land Rent', c=>c.land)}
+        ${plain('Rent as % of Revenue', c=>div(c.land,c.rev), v=>(v*100).toFixed(1)+'%')}
+        ${M.ohGroupPA.map((o,i)=>money(o.label, c=>c.oh[i], {indent:true})).join('')}
+        ${money('Machinery', c=>c.mach, {indent:true})}
+        ${money('Full Cost', c=>c.full, {bold:true})}
+        ${sec('Profitability')}
+        ${money('Contribution Margin', c=>c.cm, {bold:true, color:pos})}
+        ${plain('CM Ratio', c=>div(c.cm,c.rev), v=>(v*100).toFixed(1)+'%', {color:pos})}
+        ${money('Operating Margin', c=>c.op, {bold:true, color:pos})}
+        ${plain('ROI', c=>div(c.op,c.full), v=>(v*100).toFixed(1)+'%', {bold:true, color:roiCol})}
+        ${plain('Break-Even Price ($/bu)', c=>div(c.full,c.bu), v=>fmtD(v,2), {perBu:true})}
+      </tbody>
+    </table></div>
+    <div style="font-size:10px;color:#94a3b8;margin-top:6px">Operating margin = revenue − full cost (variable costs + land rent + overhead + machinery). Prices are blended: contracted bushels at contract prices + the rest at today's market.</div>
+    </div>
+  </div>`;
+}
+// Collapse / expand the SB Commercial, Non-GMO and Renwick columns (remembered)
+function toggleEntSoy(){
+  const open=localStorage.getItem('fpm_ent_soy_open')!=='0';
+  try{ localStorage.setItem('fpm_ent_soy_open', open?'0':'1'); }catch(e){}
+  renderRepEnterprise();
+}
+function printEnterprise(){
+  const el=document.getElementById('ent-print'); if(!el) return;
+  const hdr=`<div style="font-size:16px;font-weight:800;margin-bottom:2px">${(S.settings.farmName||'')} — Enterprise Summary</div>
+    <div style="font-size:11px;color:#64748b;margin-bottom:10px">${S.settings.year} Crop Year · ${repUnit==='tot'?'Total dollars':'Dollars per acre'} · Generated ${new Date().toLocaleDateString()}</div>`;
+  const tmp=document.createElement('div'); tmp.id='ent-print-tmp'; tmp.style.display='none';
+  tmp.innerHTML=hdr+el.innerHTML; document.body.appendChild(tmp);
+  printCrop('ent-print-tmp'); tmp.remove();
 }
 
 function printCrop(containerId){
