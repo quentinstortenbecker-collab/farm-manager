@@ -7742,8 +7742,19 @@ function gRenderPosition(yr){
     return head+fs.map(f=>{
       const hv=gFieldHarvested(f.id,yr),y=gFieldYield(f,yr),dn=gFieldDone(f.id,yr);
       const diff=y!=null?y-(+f.aph||0):null;
+      // Where this field's straight-to-town bushels went: every contract + anything not assigned
+      const town=gFieldLoads(f.id,yr).filter(l=>l.toType==='buyer');
+      let townTxt='';
+      if(town.length){
+        const by={};town.forEach(l=>{const k=l.contractId||'';by[k]=(by[k]||0)+(+l.bu||0);});
+        townTxt=Object.keys(by).sort((a,b)=>(a==='')-(b==='')).map(k=>{
+          if(!k) return`<span style="color:#b45309">${fmt(by[k])} not assigned</span>`;
+          const c=S.contracts.find(x=>x.id===+k);
+          return`${gEsc(c?(c.elevator||c.notes||'Contract'):'?')}${c?' <span style="color:var(--g400)">'+gEsc(c.date)+'</span>':''} ${fmt(by[k])}`;
+        }).join(' · ');
+      }
       return`<tr style="${dn?'':''}">
-        <td style="padding-left:22px">${gEsc(f.name)}</td>
+        <td style="padding-left:22px">${gEsc(f.name)}${townTxt?`<div style="font-size:11px;color:var(--g700);margin-top:2px">→ town: ${townTxt}</div>`:''}</td>
         <td class="tr db-hide-m">${fmt(f.acres,1)}</td>
         <td class="tr" style="font-weight:600">${hv?fmt(hv):'—'}</td>
         <td class="tr">${y!=null?y.toFixed(1):'—'} <span style="font-size:11px;color:var(--g400)">/ ${f.aph||'—'} APH</span></td>
@@ -7857,9 +7868,7 @@ function gRenderLog(){
     return`<tr><td>${gEsc(x.date)}</td><td>${type}</td><td>${x.year}</td><td>${cropLabel(x.crop)}</td><td>${from}</td><td>${to}</td>
       <td class="tr"><span class="ie" onclick="gEditBu('${x._k}',${x.id},this)" style="font-weight:600">${fmt(x.bu)}</span></td>
       <td class="tr">${x.acres?fmt(x.acres,1):'—'}</td><td class="tr">${x.moisture?(+x.moisture).toFixed(1)+'%':'—'}</td>
-      <td style="font-size:11px">${(x._k==='del'||x.toType==='buyer')
-        ?`<select class="fi" style="font-size:11px;padding:2px 4px;width:auto;max-width:220px" onchange="gAssignContract('${x._k}',${x.id},this.value)">${gAssignOptions(x.crop,x.contractId)}</select>`
-        :(c?gEsc(`${c.elevator||''} ${c.date}`):'—')}</td>
+      <td style="font-size:11px">${(x._k==='del'||x.toType==='buyer')?gContractSummaryHtml(x._k,x):'—'}</td>
       <td style="font-size:11px;color:var(--g400)">${gEsc(x.notes||'')}</td>
       <td class="tc" style="white-space:nowrap"><button class="btn btn-o btn-s" onclick="gOpenEditEntry('${x._k}',${x.id})" title="Edit this entry">✎ Edit</button>
         <button class="btn btn-r btn-s" onclick="gDelete('${x._k}',${x.id})" title="Delete this entry">✕</button></td></tr>`;
@@ -7939,7 +7948,7 @@ function gOpenLoad(){
     </div>
     <div class="fg" style="margin-top:4px"><label class="fl">Where did it go?</label>
       <div id="gl-splits"></div>
-      <button class="btn btn-o btn-s" onclick="glAddSplit()" style="margin-top:6px">+ Add another bin or town</button>
+      <button class="btn btn-o btn-s" onclick="glAddSplit()" style="margin-top:6px">+ Add another bin or contract</button>
       <div id="gl-tally" style="font-size:13px;margin-top:8px"></div>
     </div>
     ${gBuyerList()}
@@ -7953,15 +7962,27 @@ function glCrop(){
   const f=(S.fields||[]).find(x=>x.id===+document.getElementById('gl-field').value);
   return f?f.crop:null;
 }
-// Bins for this crop first, then the rest, then town (town not allowed for old crop)
+// Where a line can go: storage bins (this crop first), straight to town on one of
+// your contracts, or to town with no contract yet. Old crop can only go to a bin.
+function glContractLabel(c,left,crop){
+  const other=c.crop!==crop?` (${gCropLabel(c.crop)})`:'';
+  return`${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||c.notes||'Contract')}${c.elevator&&c.notes?' · '+gEsc(c.notes):''} · ${gEsc(c.date)}${other} · ${left<-0.5?fmt(-left)+' bu OVER':fmt(left)+' bu left'}`;
+}
 function glDestOptions(sel){
   const crop=glCrop(), carry=document.getElementById('gl-kind').value==='carryin';
   const bins=S.grain.bins.slice().sort((a,b)=>(b.crop===crop)-(a.crop===crop));
-  return bins.map(b=>{
+  const binOpts=bins.map(b=>{
     const room=(+b.capacity||0)-gBinContents(b.id);
     const v='bin:'+b.id;
     return`<option value="${v}" ${v===sel?'selected':''}>Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)} · ${fmt(Math.max(0,room))} bu room${b.type==='overflow'?' (overflow)':''}</option>`;
-  }).join('')+(carry?'':`<option value="buyer" ${sel==='buyer'?'selected':''}>Direct to town / elevator…</option>`);
+  }).join('');
+  if(carry) return`<optgroup label="Into storage">${binOpts}</optgroup>`;
+  const cs=S.contracts.filter(c=>gContractCropOk(crop,c.crop)&&(gContractLeft(c)>0.5||'c:'+c.id===sel))
+    .sort((a,b)=>(a.crop!==crop)-(b.crop!==crop)||String(a.year).localeCompare(String(b.year)));
+  const cOpts=cs.map(c=>`<option value="c:${c.id}" ${'c:'+c.id===sel?'selected':''}>${glContractLabel(c,gContractLeft(c),crop)}</option>`).join('');
+  return`<optgroup label="Into storage">${binOpts}</optgroup>`
+    +(cOpts?`<optgroup label="Straight to town — on a contract">${cOpts}</optgroup>`:'')
+    +`<optgroup label="Straight to town — no contract yet"><option value="buyer" ${sel==='buyer'?'selected':''}>Town / elevator, assign a contract later…</option></optgroup>`;
 }
 function glAddSplit(){
   const box=document.getElementById('gl-splits'); if(!box) return;
@@ -7977,11 +7998,9 @@ function glAddSplit(){
       <button class="btn btn-r btn-s" onclick="glRemoveSplit(this)" title="Remove this line">✕</button>
     </div>
     <div class="gl-room" style="font-size:12px;margin-top:5px"></div>
-    <div class="gl-town" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+    <div class="gl-town" style="display:none;margin-top:6px">
       <input class="fi gl-buyer" list="g-buyer-list" placeholder="Buyer / elevator (e.g. Gold Eagle)">
-      <select class="fi gl-contract">${gContractOptions(true)}</select>
     </div>`;
-  div.querySelector('.gl-contract').options[0].text='No contract (optional)';
   box.appendChild(div);
   glRecalc();
 }
@@ -7995,7 +8014,7 @@ function glRemoveSplit(btn){
   glRecalc();
 }
 function glDestChanged(sel){
-  sel.closest('.gl-split').querySelector('.gl-town').style.display=sel.value==='buyer'?'grid':'none';
+  sel.closest('.gl-split').querySelector('.gl-town').style.display=sel.value==='buyer'?'block':'none';
   glRecalc();
 }
 function glRefreshDests(){
@@ -8008,11 +8027,17 @@ function glUpdateRoom(){
   const pending={};
   lines.forEach(d=>{
     const v=d.querySelector('.gl-dest').value, bu=parseFloat(d.querySelector('.gl-bu').value)||0;
-    if(v.startsWith('bin:')) pending[v]=(pending[v]||0)+bu;
+    if(v.startsWith('bin:')||v.startsWith('c:')) pending[v]=(pending[v]||0)+bu;
   });
+  const crop=glCrop();
   lines.forEach(d=>{
     const sel=d.querySelector('.gl-dest');
     [...sel.options].forEach(o=>{
+      if(o.value.startsWith('c:')){ // contracts: bushels left after this entry
+        const c=S.contracts.find(x=>x.id===+o.value.slice(2)); if(!c) return;
+        o.text=glContractLabel(c,gContractLeft(c)-(pending[o.value]||0),crop).replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+        return;
+      }
       if(!o.value.startsWith('bin:')) return;
       const b=gBin(o.value.split(':')[1]); if(!b) return;
       const room=(+b.capacity||0)-gBinContents(b.id)-(pending[o.value]||0);
@@ -8020,6 +8045,14 @@ function glUpdateRoom(){
     });
     const hint=d.querySelector('.gl-room'); if(!hint) return;
     const v=sel.value;
+    if(v.startsWith('c:')){
+      const c=S.contracts.find(x=>x.id===+v.slice(2)); if(!c){hint.innerHTML='';return;}
+      const left=gContractLeft(c)-(pending[v]||0);
+      hint.innerHTML=left<-0.5
+        ?`<span style="color:#dc2626;font-weight:600">⚠ ${gEsc(c.elevator||'Contract')} ${gEsc(c.date)}: ${fmt(-left)} bu more than this contract has left</span>`
+        :`<span style="color:var(--g700)">→ ${gEsc(c.elevator||'Town')} on contract ${gEsc(c.date)} · <strong style="color:var(--gm)">${fmt(left)} bu left on it after this</strong></span>`;
+      return;
+    }
     if(!v.startsWith('bin:')){ hint.innerHTML=''; return; }
     const b=gBin(v.split(':')[1]); if(!b){ hint.innerHTML=''; return; }
     const now=gBinContents(b.id), cap=+b.capacity||0, after=now+(pending[v]||0);
@@ -8085,10 +8118,15 @@ function gSaveLoad(){
   const lines=[...document.querySelectorAll('#gl-splits .gl-split')].map(d=>({
     dest:d.querySelector('.gl-dest').value,
     bu:parseFloat(d.querySelector('.gl-bu').value)||0,
-    buyer:d.querySelector('.gl-buyer').value.trim(),
-    contractId:+d.querySelector('.gl-contract').value||null
+    buyer:d.querySelector('.gl-buyer').value.trim()
   })).filter(l=>l.bu>0);
-  if(!lines.length){alert('Enter bushels for at least one bin or town.');return;}
+  if(!lines.length){alert('Enter bushels for at least one bin or contract.');return;}
+  // Lines picked as "on a contract": town load against that contract
+  lines.forEach(l=>{
+    if(!l.dest.startsWith('c:')) return;
+    const c=S.contracts.find(x=>x.id===+l.dest.slice(2));
+    l.contractId=c?c.id:null; l.buyer=(c&&c.elevator)||'Town'; l.dest='buyer'; l.onContract=true;
+  });
   const sum=lines.reduce((a,l)=>a+l.bu,0);
   const total=parseFloat(document.getElementById('gl-total').value)||0;
   if(total>0&&Math.abs(total-sum)>=0.5&&!confirm(`The lines add up to ${fmt(sum)} bu but the field total is ${fmt(total)} bu.\n\nSave ${fmt(sum)} bu anyway?`)) return;
@@ -8098,6 +8136,14 @@ function gSaveLoad(){
       if(kind==='carryin'){alert('Old crop entries must go into a bin.');return;}
       if(!l.buyer){alert('Enter the buyer or elevator for the town line.');return;}
     }
+  }
+  // Contract checks — more bushels than a contract has left?
+  const perC={};
+  lines.filter(l=>l.contractId).forEach(l=>perC[l.contractId]=(perC[l.contractId]||0)+l.bu);
+  for(const cid in perC){
+    const c=S.contracts.find(x=>x.id===+cid); if(!c) continue;
+    const left=gContractLeft(c);
+    if(perC[cid]>left+0.5&&!confirm(`${c.elevator||'Contract'} ${c.date} only has ${fmt(left)} bu left to fill, but ${fmt(perC[cid])} bu is going on it.\n\nSave anyway?`))return;
   }
   // Bin checks — add up lines going to the same bin first
   const perBin={};
@@ -8115,8 +8161,8 @@ function gSaveLoad(){
       acres:acres>0?Math.round(acres*l.bu/sum*100)/100:0, // share of acres by bushels → yield stays right
       moisture,contractId:null,notes};
     if(l.dest==='buyer'){
-      rec.toType='buyer';rec.to=l.buyer;rec.contractId=l.contractId;
-      if(!g.buyers.includes(l.buyer))g.buyers.push(l.buyer);
+      rec.toType='buyer';rec.to=l.buyer;rec.contractId=l.contractId||null;
+      if(l.buyer!=='Town'&&!g.buyers.includes(l.buyer))g.buyers.push(l.buyer);
     }else{
       rec.toType='bin';rec.to=gBin(l.dest.split(':')[1]).id;
     }
@@ -8235,40 +8281,34 @@ function gContractCropOk(loadCrop,contractCrop){
   if(loadCrop===contractCrop) return true;
   return String(loadCrop).startsWith('soy')&&String(contractCrop).startsWith('soy');
 }
-function gAssignOptions(crop,selId){
-  // Any matching contract that still has bushels not matched to a load — including
-  // ones already checked ✓ Delivered in Marketing (e.g. a cash sale you logged there).
-  const cs=S.contracts.filter(c=>gContractCropOk(crop,c.crop)&&(gContractLeft(c)>0.5||c.id===+selId))
-    .sort((a,b)=>String(a.year).localeCompare(String(b.year))||String(a.date).localeCompare(String(b.date)));
-  const opt=c=>`<option value="${c.id}" ${c.id===+selId?'selected':''}>${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||'Contract')}${c.notes?' · '+gEsc(c.notes):''} · ${gEsc(c.date)} · ${fmt(c.bu)} bu${gContractLeft(c)<c.bu-0.5&&gContractLeft(c)>0.5?' ('+fmt(gContractLeft(c))+' unmatched)':''}${c.completed?' · ✓':''}${String(c.year)!==String(S.activeYear)?' · '+c.year:''}</option>`;
-  // Group by type, the load's own type first
-  const order=[crop,...GRAIN_CROPS.map(g=>g.key).filter(k=>k!==crop)];
-  const groups=order.map(k=>{
-    const mine=cs.filter(c=>c.crop===k); if(!mine.length) return '';
-    const label=(GRAIN_CROPS.find(g=>g.key===k)||{label:k}).label;
-    return`<optgroup label="${label}${k!==crop?' contracts':''}">${mine.map(opt).join('')}</optgroup>`;
-  }).join('');
-  return`<option value="">— not assigned —</option>`+groups;
+/* ── LOAD GROUPS ──
+   (used by the Edit window's contract checklist)
+   A "load" = all the pieces saved together for one field→town line (or one
+   bin→buyer delivery line): same entryId, same field/bin, same buyer. Each
+   contract gets its own piece (same data shape as before, so bins, yields and
+   contract deliveries keep working); anything not allocated stays as one
+   unassigned piece. Re-opening shows every contract the load is on. */
+function gLoadGroup(kind,x){
+  const arr=kind==='del'?S.grain.deliveries:S.grain.loads;
+  if(!x.entryId) return[x];
+  return arr.filter(r=>r.entryId===x.entryId&&r.to===x.to&&(kind==='del'
+    ?(+r.fromBin===+x.fromBin&&String(r.year)===String(x.year))
+    :(r.toType==='buyer'&&+r.fieldId===+x.fieldId)));
 }
-function gAssignContract(kind,id,val){
-  const g=S.grain, arr=kind==='del'?g.deliveries:g.loads;
-  const x=arr.find(r=>r.id===+id); if(!x) return;
-  const cid=+val||null;
-  if(cid){
-    const c=S.contracts.find(k=>k.id===cid);
-    const left=(+c.bu||0)-gContractDelivered(c.id)+(x.contractId===cid?(+x.bu||0):0);
-    if(x.bu>left+0.5&&left>0.5){
-      const split=confirm(`This delivery is ${fmt(x.bu)} bu but the contract only has ${fmt(left)} bu left.\n\nOK = split it: ${fmt(left)} bu to this contract, ${fmt(x.bu-left)} bu stays unassigned.\nCancel = assign all ${fmt(x.bu)} bu anyway.`);
-      if(split){
-        const rest=x.bu-left, copy={...x,id:nid(arr),contractId:null,bu:rest};
-        if(x.acres){copy.acres=Math.round(x.acres*rest/x.bu*100)/100; x.acres=Math.round((x.acres-copy.acres)*100)/100;}
-        x.bu=left; arr.push(copy);
-      }
-    }
-  }
-  x.contractId=cid;
-  save(); renderGrain();
+// Log "Contract" cell for a town load / delivery piece: its contract (or not assigned),
+// how the whole load is split, and a button to open the contract checklist.
+function gContractSummaryHtml(k,x){
+  const c=x.contractId?S.contracts.find(cc=>cc.id===+x.contractId):null;
+  const grp=gLoadGroup(k,x);
+  const me=c?`<strong>${gEsc(c.elevator||c.notes||'Contract')}</strong> <span style="color:var(--g400)">${gEsc(c.date)}</span>`
+           :'<span style="color:#b45309;font-weight:600">not assigned</span>';
+  const part=grp.length>1?`<div style="color:var(--g400);margin-top:2px">part of a ${fmt(gSum(grp,r=>r.bu))} bu load on ${grp.filter(r=>r.contractId).length} contract${grp.filter(r=>r.contractId).length===1?'':'s'}</div>`:'';
+  return`<div style="display:flex;align-items:flex-start;gap:6px;justify-content:space-between"><div>${me}${part}</div>
+    <button class="btn btn-o btn-s" onclick="gOpenEditEntry('${k}',${x.id})" title="Check which contracts this load went on">☑</button></div>`;
 }
+// Short label for a contract in summaries
+function gContractShort(c){return c?`${c.elevator||'Contract'}${c.notes?' '+c.notes:''} (${c.date})`:'?';}
+
 // Deliveries and town loads with no contract yet, grouped by crop
 function gUnassignedHtml(){
   const g=S.grain;
@@ -8284,7 +8324,7 @@ function gUnassignedHtml(){
       +mine.map(x=>`<tr>
         <td style="padding-left:22px">${gEsc(x.date)} <span style="font-size:11px;color:var(--g400)">${gEsc(x.src)} → ${gEsc(x.to||'Town')}${x.year!==gYear()?' · '+x.year+' crop':''}</span></td>
         <td class="tr" style="font-weight:600">${fmt(x.bu)}</td>
-        <td colspan="2"><select class="fi" style="font-size:12px;padding:4px 6px" onchange="gAssignContract('${x._k}',${x.id},this.value)">${gAssignOptions(x.crop,null)}</select></td>
+        <td colspan="2"><button class="btn btn-p btn-s" onclick="gOpenEditEntry('${x._k}',${x.id})">☑ Assign contracts</button></td>
       </tr>`).join('');
   }).join('');
   return`<div class="card">
@@ -8306,117 +8346,218 @@ function gEditBu(k,id,el){
   iePop(el,'Bushels',x.bu,nv=>{const v=parseFloat(nv);if(!(v>0)){alert('Bushels must be more than 0.');return;}x.bu=v;save();renderGrain();},'number');
 }
 /* ── EDIT A LOG ENTRY ──
-   Opens the entry in a form so any part of it can be corrected in place
-   (date, field, bin, town/buyer, bushels, acres, moisture, contract, notes). */
+   Opens the entry in a form so any part of it can be corrected in place.
+   For anything that went to town (harvest straight to town, or a delivery out
+   of a bin) the form works on the whole load and shows a CHECKLIST of your
+   contracts: check every contract it went on and set the bushels for each.
+   Each checked contract is saved as its own piece of the load (same data as
+   before, so bins, yields and contract deliveries keep working); bushels not
+   on any contract stay as one "not assigned" piece. */
+let _geCtx=null;
 function gOpenEditEntry(k,id){
   const g=ensureGrain(), isDel=k==='del';
   const x=(isDel?g.deliveries:g.loads).find(r=>r.id===+id); if(!x) return;
+  const isTown=isDel||x.toType==='buyer';
+  const grp=isTown?gLoadGroup(k,x):[x];
+  const total=gSum(grp,r=>r.bu);
+  const alloc={}; grp.filter(r=>r.contractId).forEach(r=>alloc[r.contractId]=(alloc[r.contractId]||0)+(+r.bu||0));
+  _geCtx={k,ids:grp.map(r=>r.id),alloc,origTotal:total};
   const binOpts=(sel,crop)=>g.bins.map(b=>`<option value="${b.id}" ${+sel===b.id?'selected':''}>Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)}${crop&&b.crop!==crop?' (other crop)':''}</option>`).join('');
   const yrs=[...new Set([String(+gYear()-2),String(+gYear()-1),String(gYear()),String(x.year)])].sort();
   const yrOpts=yrs.map(y=>`<option ${String(x.year)===y?'selected':''}>${y}</option>`).join('');
+  const buIn=`<div class="fg"><label class="fl">${isTown?'Total bushels in this load':'Bushels'}</label><input class="fi" id="ge-bu" type="number" step="any" min="0" value="${total}" oninput="geTally()" style="font-weight:600"></div>`;
+  const clist=`<div class="fg" id="ge-clist-box"><label class="fl">Contracts this load went on <span style="font-weight:400;color:var(--g400)">— check all that apply</span></label>
+      <div id="ge-clist" style="border:1px solid var(--g200);border-radius:var(--r);max-height:240px;overflow-y:auto"></div>
+      <div id="ge-ctally" style="font-size:13px;margin-top:6px;font-weight:600"></div></div>`;
   let body;
   if(isDel){
     body=`<div class="fr fr2">
-        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>
-        <div class="fg"><label class="fl">Bushels</label><input class="fi" id="ge-bu" type="number" step="any" min="0" value="${x.bu}" style="font-weight:600"></div></div>
+        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>${buIn}</div>
       <div class="fr fr2">
         <div class="fg"><label class="fl">From bin</label><select class="fi" id="ge-bin" onchange="geCropChanged()">${binOpts(x.fromBin)}</select></div>
         <div class="fg"><label class="fl">Crop year of the grain</label><select class="fi" id="ge-year">${yrOpts}</select></div></div>
-      <div class="fr fr2">
-        <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="ge-buyer" list="g-buyer-list" value="${gEsc(x.to&&x.to!=='Town'?x.to:'')}" placeholder="Town">${gBuyerList()}</div>
-        <div class="fg"><label class="fl">Contract</label><select class="fi" id="ge-contract">${gAssignOptions(x.crop,x.contractId)}</select></div></div>`;
+      <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="ge-buyer" list="g-buyer-list" value="${gEsc(x.to&&x.to!=='Town'?x.to:'')}" placeholder="Town">${gBuyerList()}</div>
+      ${clist}`;
   }else{
     const harvest=x.kind!=='carryin';
     const inYear=harvest&&String(x.year)===String(gYear());
     const fOpts=(S.fields||[]).map(f=>`<option value="${f.id}" ${+x.fieldId===f.id?'selected':''}>${gEsc(f.name)} — ${gCropLabel(f.crop)}</option>`).join('');
     const dest=x.toType==='bin'?String(x.to):'buyer';
     body=`<div class="fr fr2">
-        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>
-        <div class="fg"><label class="fl">Bushels</label><input class="fi" id="ge-bu" type="number" step="any" min="0" value="${x.bu}" style="font-weight:600"></div></div>
+        <div class="fg"><label class="fl">Date</label><input class="fi" id="ge-date" type="date" value="${gEsc(x.date)}"></div>${buIn}</div>
       ${harvest
         ?(inYear?`<div class="fg"><label class="fl">Field</label><select class="fi" id="ge-field" onchange="geCropChanged()">${fOpts}</select></div>`
                 :`<div class="fg"><label class="fl">Field</label><div class="cs">${x.year} crop field (switch to the ${x.year} crop year to change the field)</div></div>`)
         :`<div class="fr fr2">
             <div class="fg"><label class="fl">Crop</label><select class="fi" id="ge-crop" onchange="geCropChanged()">${GRAIN_CROPS.map(c=>`<option value="${c.key}" ${c.key===x.crop?'selected':''}>${c.label}</option>`).join('')}</select></div>
             <div class="fg"><label class="fl">Crop year</label><select class="fi" id="ge-year">${yrOpts}</select></div></div>`}
-      <div class="fg"><label class="fl">Where did it go?</label><select class="fi" id="ge-dest" onchange="document.getElementById('ge-town').style.display=this.value==='buyer'?'grid':'none'">
-        ${binOpts(dest,x.crop)}${harvest?`<option value="buyer" ${dest==='buyer'?'selected':''}>Direct to town / elevator…</option>`:''}</select></div>
-      <div id="ge-town" class="fr fr2" style="display:${dest==='buyer'?'grid':'none'}">
+      <div class="fg"><label class="fl">Where did it go?</label><select class="fi" id="ge-dest" onchange="document.getElementById('ge-town').style.display=this.value==='buyer'?'':'none'">
+        ${binOpts(dest,x.crop)}${harvest?`<option value="buyer" ${dest==='buyer'?'selected':''}>Straight to town / elevator</option>`:''}</select></div>
+      <div id="ge-town" style="display:${dest==='buyer'?'':'none'}">
         <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="ge-buyer" list="g-buyer-list" value="${gEsc(x.toType==='buyer'?x.to:'')}">${gBuyerList()}</div>
-        <div class="fg"><label class="fl">Contract</label><select class="fi" id="ge-contract">${gAssignOptions(x.crop,x.contractId)}</select></div></div>
+        ${harvest?clist:''}</div>
       ${harvest?`<div class="fr fr2">
-        <div class="fg"><label class="fl">Acres harvested (optional)</label><input class="fi" id="ge-acres" type="number" step="any" min="0" value="${x.acres||''}"></div>
+        <div class="fg"><label class="fl">Acres harvested (optional)</label><input class="fi" id="ge-acres" type="number" step="any" min="0" value="${gSum(grp,r=>r.acres||0)||''}"></div>
         <div class="fg"><label class="fl">Moisture % (optional)</label><input class="fi" id="ge-moist" type="number" step="0.1" min="0" value="${x.moisture||''}"></div></div>`:''}`;
   }
   openModal(`${body}
     <div class="fg"><label class="fl">Notes</label><input class="fi" id="ge-notes" value="${gEsc(x.notes||'')}"></div>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-p" onclick="gSaveEditEntry('${k}',${x.id})">Save changes</button>
+      <button class="btn btn-p" onclick="gSaveEditEntry()">Save changes</button>
       <button class="btn btn-o" onclick="closeModal()">Cancel</button></div>`,
     isDel?'Edit delivery':x.kind==='carryin'?'Edit old crop entry':'Edit harvest entry');
+  geRenderList(x.crop);
 }
 // Crop of the entry as currently set in the edit form
-function geCrop(k){
+function geCrop(){
   const bin=document.getElementById('ge-bin'), fld=document.getElementById('ge-field'), cr=document.getElementById('ge-crop');
   if(bin) return (gBin(bin.value)||{}).crop;
   if(fld){const f=(S.fields||[]).find(x=>x.id===+fld.value);return f?f.crop:null;}
   if(cr) return cr.value;
-  return null;
+  const x=_geCtx&&(_geCtx.k==='del'?S.grain.deliveries:S.grain.loads).find(r=>r.id===_geCtx.ids[0]);
+  return x?x.crop:null;
 }
-// Crop changed (field / bin / crop) → refresh the contract list for that crop
-function geCropChanged(){
-  const sel=document.getElementById('ge-contract'); if(!sel) return;
-  const crop=geCrop(); if(!crop) return;
-  const cur=sel.value, c=S.contracts.find(x=>x.id===+cur);
-  sel.innerHTML=gAssignOptions(crop,c&&gContractCropOk(crop,c.crop)?c.id:null);
+function geCropChanged(){ const c=geCrop(); if(c) geRenderList(c); }
+// Bushels a contract can still take, not counting what this load already has on it
+function geRoom(c){return gContractLeft(c)+((_geCtx&&_geCtx.alloc[c.id])||0);}
+function geRenderList(crop){
+  const box=document.getElementById('ge-clist'); if(!box||!_geCtx) return;
+  // keep what's typed for contracts still valid for this crop
+  const cur={};
+  box.querySelectorAll('.ge-c').forEach(r=>{if(r.querySelector('input[type=checkbox]').checked)cur[r.dataset.cid]=parseFloat(r.querySelector('.ge-cbu').value)||0;});
+  const start=Object.keys(cur).length||box.dataset.ready?cur:_geCtx.alloc;
+  box.dataset.ready='1';
+  const cs=S.contracts.filter(c=>gContractCropOk(crop,c.crop)&&(geRoom(c)>0.5||start[c.id]))
+    .sort((a,b)=>(!start[b.id])-(!start[a.id])||(a.crop!==crop)-(b.crop!==crop)||String(a.year).localeCompare(String(b.year)));
+  box.innerHTML=cs.length?cs.map(c=>{
+    const on=!!start[c.id];
+    const other=c.crop!==crop?` <span class="b bx" style="font-size:10px">${gCropLabel(c.crop)}</span>`:'';
+    return`<div class="ge-c" data-cid="${c.id}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--g100)">
+      <input type="checkbox" ${on?'checked':''} onchange="geToggle(this)" style="flex-shrink:0">
+      <div style="flex:1;min-width:0;font-size:12px;cursor:pointer" onclick="const b=this.parentNode.querySelector('input[type=checkbox]');b.checked=!b.checked;geToggle(b)">
+        <strong>${c.type==='Cash Sale'?'💵 ':''}${gEsc(c.elevator||c.notes||'Contract')}</strong>${c.elevator&&c.notes?' · '+gEsc(c.notes):''}${other}
+        <div style="color:var(--g400)">${gEsc(c.date)} · ${fmt(c.bu)} bu · <span class="ge-room">${fmt(geRoom(c))} bu open</span>${String(c.year)!==String(S.activeYear)?' · '+c.year+' crop':''}</div></div>
+      <input class="fi ge-cbu" type="number" step="any" min="0" value="${on?start[c.id]:''}" placeholder="bu" oninput="geTyped(this)" style="width:100px;font-weight:600">
+    </div>`;}).join('')
+    :`<div style="padding:12px;color:var(--g400);font-size:12px">No ${gCropLabel(crop)} contracts with open bushels — add one in Marketing.</div>`;
+  geTally();
 }
-function gSaveEditEntry(k,id){
-  const g=ensureGrain(), isDel=k==='del';
-  const x=(isDel?g.deliveries:g.loads).find(r=>r.id===+id); if(!x) return;
+// Checking a contract fills in what it can take, up to what's not assigned yet
+function geToggle(cb){
+  const row=cb.closest('.ge-c'), inp=row.querySelector('.ge-cbu');
+  if(!cb.checked){inp.value='';geTally();return;}
+  const c=S.contracts.find(x=>x.id===+row.dataset.cid);
+  const total=parseFloat(document.getElementById('ge-bu').value)||0;
+  const used=[...document.querySelectorAll('#ge-clist .ge-c')].filter(r=>r!==row&&r.querySelector('input[type=checkbox]').checked)
+    .reduce((a,r)=>a+(parseFloat(r.querySelector('.ge-cbu').value)||0),0);
+  const fill=Math.max(0,Math.min(total-used,c?geRoom(c):total));
+  inp.value=fill>0?Math.round(fill*100)/100:'';
+  geTally();
+}
+function geTyped(inp){
+  const cb=inp.closest('.ge-c').querySelector('input[type=checkbox]');
+  cb.checked=(parseFloat(inp.value)||0)>0;
+  geTally();
+}
+function geTally(){
+  const t=document.getElementById('ge-ctally'); if(!t) return;
+  const total=parseFloat(document.getElementById('ge-bu').value)||0;
+  const rows=[...document.querySelectorAll('#ge-clist .ge-c')];
+  let sum=0;
+  rows.forEach(r=>{
+    const on=r.querySelector('input[type=checkbox]').checked, bu=on?(parseFloat(r.querySelector('.ge-cbu').value)||0):0;
+    sum+=bu;
+    const c=S.contracts.find(x=>x.id===+r.dataset.cid), room=c?geRoom(c)-bu:0, el=r.querySelector('.ge-room');
+    if(el){el.textContent=on?(room<-0.5?`${fmt(-room)} bu OVER`:`${fmt(room)} bu open after this`):`${fmt(c?geRoom(c):0)} bu open`;el.style.color=on&&room<-0.5?'#dc2626':'';}
+    r.style.background=on?'#f0fdf4':'';
+  });
+  const rest=total-sum;
+  t.innerHTML=!rows.length?'':Math.abs(rest)<0.5?`<span style="color:var(--gm)">✓ All ${fmt(total)} bu on contracts</span>`
+    :rest>0?`<span style="color:#b45309">${fmt(sum)} of ${fmt(total)} bu on contracts — ${fmt(rest)} bu not assigned</span>`
+    :`<span style="color:#dc2626">${fmt(sum)} bu checked — ${fmt(-rest)} bu more than this load</span>`;
+}
+function geReadAlloc(){
+  const a={};
+  document.querySelectorAll('#ge-clist .ge-c').forEach(r=>{
+    if(!r.querySelector('input[type=checkbox]').checked) return;
+    const bu=parseFloat(r.querySelector('.ge-cbu').value)||0;
+    if(bu>0) a[+r.dataset.cid]=(a[+r.dataset.cid]||0)+bu;
+  });
+  return a;
+}
+function gSaveEditEntry(){
+  const ctx=_geCtx; if(!ctx) return;
+  const g=ensureGrain(), isDel=ctx.k==='del', arr=isDel?g.deliveries:g.loads;
+  const grp=arr.filter(r=>ctx.ids.includes(r.id)); if(!grp.length){closeModal();return;}
+  const x=grp[0];
   const v=i=>document.getElementById(i);
   const bu=parseFloat(v('ge-bu').value)||0;
   if(!(bu>0)){alert('Bushels must be more than 0.');return;}
   const date=v('ge-date').value||x.date, notes=v('ge-notes').value.trim();
+  const oldTotal=gSum(grp,r=>r.bu);
+  let upd, toTown;
   if(isDel){
     const bin=gBin(v('ge-bin').value), year=v('ge-year').value;
     if(!bin){alert('Pick a bin.');return;}
     // grain available = what's in the bin now, plus this delivery's own bushels if it came from the same bin/year
-    const have=gBinContents(bin.id,year)+((+x.fromBin===bin.id&&String(x.year)===String(year))?(+x.bu||0):0);
+    const have=gBinContents(bin.id,year)+((+x.fromBin===bin.id&&String(x.year)===String(year))?oldTotal:0);
     if(bu>have+0.5&&!confirm(`Bin ${bin.name} would only have ${fmt(have)} bu of ${year} grain. Save ${fmt(bu)} bu anyway?`))return;
     const buyer=v('ge-buyer').value.trim();
     if(buyer&&!g.buyers.includes(buyer))g.buyers.push(buyer);
-    const cid=+v('ge-contract').value||null;
-    Object.assign(x,{date,bu,fromBin:bin.id,year,crop:bin.crop,to:buyer||'Town',contractId:cid,notes});
+    upd={date,fromBin:bin.id,year,crop:bin.crop,to:buyer||'Town',notes};
+    toTown=true;
   }else{
     const harvest=x.kind!=='carryin';
     let crop=x.crop, year=x.year, fieldId=x.fieldId;
     if(harvest&&v('ge-field')){const f=(S.fields||[]).find(f=>f.id===+v('ge-field').value);if(!f){alert('Pick a field.');return;}crop=f.crop;fieldId=f.id;}
     if(!harvest){crop=v('ge-crop').value;year=v('ge-year').value;}
     const dest=v('ge-dest').value;
-    const upd={date,bu,crop,year,fieldId,notes};
+    upd={date,crop,year,fieldId,notes};
     if(harvest){upd.acres=parseFloat(v('ge-acres').value)||0;upd.moisture=parseFloat(v('ge-moist').value)||0;}
     if(dest==='buyer'){
       const buyer=v('ge-buyer').value.trim();
       if(!buyer){alert('Enter the buyer or elevator.');return;}
       if(!g.buyers.includes(buyer))g.buyers.push(buyer);
-      Object.assign(upd,{toType:'buyer',to:buyer,contractId:+v('ge-contract').value||null});
+      Object.assign(upd,{toType:'buyer',to:buyer});
+      toTown=true;
     }else{
       const bin=gBin(dest); if(!bin){alert('Pick a bin.');return;}
       if(bin.crop!==crop){alert(`Bin ${bin.name} is set up for ${gCropLabel(bin.crop)}, not ${gCropLabel(crop)}.\n\nIf that's intended, change the bin's crop in Bin Setup first.`);return;}
-      const after=gBinContents(bin.id)-((x.toType==='bin'&&+x.to===bin.id)?(+x.bu||0):0)+bu, cap=+bin.capacity||0;
+      const wasHere=grp.filter(r=>r.toType==='bin'&&+r.to===bin.id).reduce((a,r)=>a+(+r.bu||0),0);
+      const after=gBinContents(bin.id)-wasHere+bu, cap=+bin.capacity||0;
       if(cap>0&&after>cap&&!confirm(`Bin ${bin.name} would hold ${fmt(after)} bu — over its ${fmt(cap)} bu capacity by ${fmt(after-cap)} bu.\n\nSave anyway?`))return;
       Object.assign(upd,{toType:'bin',to:bin.id,contractId:null});
+      toTown=false;
     }
-    // Taking bushels out of the bin it was in (moved or reduced) can leave that bin
-    // below zero if grain was already delivered out of it — warn first.
+    // Taking bushels out of the bin it was in can leave that bin below zero
     if(x.toType==='bin'){
-      const oldBin=gBin(x.to);
-      const stays=upd.toType==='bin'&&+upd.to===+x.to;
+      const oldBin=gBin(x.to), stays=upd.toType==='bin'&&+upd.to===+x.to;
       const left=gBinContents(x.to)-(+x.bu||0)+(stays?bu:0);
       if(oldBin&&left<-0.5&&!confirm(`Bin ${oldBin.name} would show ${fmt(left)} bu — more grain has been delivered out of it than would be left in it.\n\nSave anyway?`))return;
     }
-    Object.assign(x,upd);
   }
+  // Contract allocation (town loads only)
+  const alloc=toTown?geReadAlloc():{};
+  const onC=Object.values(alloc).reduce((a,b)=>a+b,0);
+  if(onC>bu+0.5){alert(`${fmt(onC)} bu is checked on contracts but this load is only ${fmt(bu)} bu.`);return;}
+  for(const cid in alloc){
+    const c=S.contracts.find(k=>k.id===+cid); if(!c) continue;
+    const room=geRoom(c);
+    if(alloc[cid]>room+0.5&&!confirm(`${c.elevator||'Contract'} ${c.date} only has ${fmt(room)} bu open, but ${fmt(alloc[cid])} bu is checked on it.\n\nSave anyway?`))return;
+  }
+  // Rebuild the load: one piece per checked contract + one unassigned piece for the rest
+  const totAc=upd.acres!=null?upd.acres:gSum(grp,r=>r.acres||0);
+  const base={...x,...upd};
+  delete base.acres;
+  const entryId=x.entryId||Date.now();
+  let next=nid(arr);
+  const keep=arr.filter(r=>!ctx.ids.includes(r.id));
+  const piece=(pbu,cid)=>{const p={...base,id:next++,entryId,bu:pbu,contractId:cid||null};
+    if(!isDel)p.acres=totAc>0?Math.round(totAc*pbu/bu*100)/100:0; return p;};
+  const pieces=Object.keys(alloc).map(cid=>piece(alloc[cid],+cid));
+  if(bu-onC>0.5||!pieces.length) pieces.push(piece(bu-onC,null));
+  if(isDel) g.deliveries=keep.concat(pieces); else g.loads=keep.concat(pieces);
+  _geCtx=null;
   save();closeModal();renderGrain();
 }
 
