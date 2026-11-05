@@ -7843,6 +7843,13 @@ function gYearOptions(sel){
   return ys.map(v=>`<option ${String(v)===String(sel)?'selected':''}>${v}</option>`).join('');
 }
 
+/* ── HARVEST ENTRY: one entry per field, split across bins / town ──
+   You enter the field's total bushels once, then list where it went. Each line
+   is saved as its own load record (same data as before, so bins, yields and
+   contract deliveries all work unchanged); the lines share an entryId.
+   Acres are split across the lines in proportion to bushels so the field's
+   yield (bu ÷ acres) comes out right. */
+let _glSeq=0;
 function gOpenLoad(){
   ensureGrain();
   const fields=(S.fields||[]);
@@ -7854,25 +7861,126 @@ function gOpenLoad(){
         <option value="harvest">Harvest (yield monitor)</option><option value="carryin">Old crop already in bin</option></select></div>
       <div class="fg"><label class="fl">Date</label><input class="fi" id="gl-date" type="date" value="${gToday()}"></div>
     </div>
-    <div id="gl-harvest-box" class="fg"><label class="fl">Field</label><select class="fi" id="gl-field">${fOpts}</select></div>
+    <div id="gl-harvest-box" class="fg"><label class="fl">Field</label><select class="fi" id="gl-field" onchange="glRefreshDests()">${fOpts}</select></div>
     <div id="gl-carry-box" class="fr fr2" style="display:none">
-      <div class="fg"><label class="fl">Crop</label><select class="fi" id="gl-crop">${GRAIN_CROPS.map(c=>`<option value="${c.key}">${c.label}</option>`).join('')}</select></div>
+      <div class="fg"><label class="fl">Crop</label><select class="fi" id="gl-crop" onchange="glRefreshDests()">${GRAIN_CROPS.map(c=>`<option value="${c.key}">${c.label}</option>`).join('')}</select></div>
       <div class="fg"><label class="fl">Crop year</label><select class="fi" id="gl-year">${gYearOptions(+gYear()-1)}</select></div>
     </div>
-    <div class="fg"><label class="fl">Where did it go?</label><select class="fi" id="gl-dest" onchange="gLoadDestChanged()">${gDestOptions()}</select></div>
-    <div id="gl-town-box" style="display:none">
-      <div class="fr fr2">
-        <div class="fg"><label class="fl">Buyer / elevator</label><input class="fi" id="gl-buyer" list="g-buyer-list" placeholder="e.g. Gold Eagle">${gBuyerList()}</div>
-        <div class="fg"><label class="fl">Against contract (optional)</label><select class="fi" id="gl-contract">${gContractOptions(true)}</select></div>
-      </div>
-    </div>
     <div class="fr fr3">
-      <div class="fg"><label class="fl">Dry bushels</label><input class="fi" id="gl-bu" type="number" step="any" min="0" style="font-size:15px;font-weight:600"></div>
+      <div class="fg"><label class="fl" id="gl-total-lbl">Total dry bushels from this field</label><input class="fi" id="gl-total" type="number" step="any" min="0" style="font-size:15px;font-weight:600" oninput="glRecalc()" placeholder="optional"></div>
       <div class="fg" id="gl-acres-box"><label class="fl">Acres harvested (optional)</label><input class="fi" id="gl-acres" type="number" step="any" min="0"></div>
       <div class="fg" id="gl-moist-box"><label class="fl">Moisture % (optional)</label><input class="fi" id="gl-moist" type="number" step="0.1" min="0"></div>
     </div>
+    <div class="fg" style="margin-top:4px"><label class="fl">Where did it go?</label>
+      <div id="gl-splits"></div>
+      <button class="btn btn-o btn-s" onclick="glAddSplit()" style="margin-top:6px">+ Add another bin or town</button>
+      <div id="gl-tally" style="font-size:13px;margin-top:8px"></div>
+    </div>
+    ${gBuyerList()}
     <div class="fg"><label class="fl">Notes</label><input class="fi" id="gl-notes"></div>
     <button class="btn btn-p" style="margin-top:8px" onclick="gSaveLoad()">Save entry</button>`,'Harvest Entry');
+  glAddSplit();
+}
+// Crop of the grain being entered (field's crop, or the chosen crop for old crop)
+function glCrop(){
+  if(document.getElementById('gl-kind').value==='carryin') return document.getElementById('gl-crop').value;
+  const f=(S.fields||[]).find(x=>x.id===+document.getElementById('gl-field').value);
+  return f?f.crop:null;
+}
+// Bins for this crop first, then the rest, then town (town not allowed for old crop)
+function glDestOptions(sel){
+  const crop=glCrop(), carry=document.getElementById('gl-kind').value==='carryin';
+  const bins=S.grain.bins.slice().sort((a,b)=>(b.crop===crop)-(a.crop===crop));
+  return bins.map(b=>{
+    const room=(+b.capacity||0)-gBinContents(b.id);
+    const v='bin:'+b.id;
+    return`<option value="${v}" ${v===sel?'selected':''}>Bin ${gEsc(b.name)} — ${gCropLabel(b.crop)} · ${fmt(Math.max(0,room))} bu room${b.type==='overflow'?' (overflow)':''}</option>`;
+  }).join('')+(carry?'':`<option value="buyer" ${sel==='buyer'?'selected':''}>Direct to town / elevator…</option>`);
+}
+function glAddSplit(){
+  const box=document.getElementById('gl-splits'); if(!box) return;
+  // the previous last line keeps whatever it has; the new line takes the remainder
+  box.querySelectorAll('.gl-bu').forEach(i=>delete i.dataset.auto);
+  const id=++_glSeq;
+  const div=document.createElement('div');
+  div.className='gl-split'; div.dataset.id=id;
+  div.style.cssText='border:1px solid var(--g200);border-radius:var(--r);padding:8px;margin-bottom:6px;background:var(--g50)';
+  div.innerHTML=`<div style="display:grid;grid-template-columns:1fr 130px auto;gap:6px;align-items:center">
+      <select class="fi gl-dest" onchange="glDestChanged(this)">${glDestOptions('')}</select>
+      <input class="fi gl-bu" type="number" step="any" min="0" placeholder="Bushels" data-auto="1" oninput="delete this.dataset.auto;glRecalc()" style="font-weight:600">
+      <button class="btn btn-r btn-s" onclick="glRemoveSplit(this)" title="Remove this line">✕</button>
+    </div>
+    <div class="gl-room" style="font-size:12px;margin-top:5px"></div>
+    <div class="gl-town" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+      <input class="fi gl-buyer" list="g-buyer-list" placeholder="Buyer / elevator (e.g. Gold Eagle)">
+      <select class="fi gl-contract">${gContractOptions(true)}</select>
+    </div>`;
+  div.querySelector('.gl-contract').options[0].text='No contract (optional)';
+  box.appendChild(div);
+  glRecalc();
+}
+function glRemoveSplit(btn){
+  const box=document.getElementById('gl-splits');
+  if(box.querySelectorAll('.gl-split').length<=1){ // keep at least one line; just clear it
+    const i=box.querySelector('.gl-bu'); i.value=''; i.dataset.auto='1'; glRecalc(); return;
+  }
+  btn.closest('.gl-split').remove();
+  const last=[...box.querySelectorAll('.gl-bu')].pop(); if(last) last.dataset.auto='1';
+  glRecalc();
+}
+function glDestChanged(sel){
+  sel.closest('.gl-split').querySelector('.gl-town').style.display=sel.value==='buyer'?'grid':'none';
+  glRecalc();
+}
+function glRefreshDests(){
+  document.querySelectorAll('#gl-splits .gl-dest').forEach(s=>{const v=s.value;s.innerHTML=glDestOptions(v);glDestChanged(s);});
+}
+// Live bin space: subtract what this form is putting in each bin (all lines combined)
+// from the bin's room, in every dropdown and under each line.
+function glUpdateRoom(){
+  const lines=[...document.querySelectorAll('#gl-splits .gl-split')];
+  const pending={};
+  lines.forEach(d=>{
+    const v=d.querySelector('.gl-dest').value, bu=parseFloat(d.querySelector('.gl-bu').value)||0;
+    if(v.startsWith('bin:')) pending[v]=(pending[v]||0)+bu;
+  });
+  lines.forEach(d=>{
+    const sel=d.querySelector('.gl-dest');
+    [...sel.options].forEach(o=>{
+      if(!o.value.startsWith('bin:')) return;
+      const b=gBin(o.value.split(':')[1]); if(!b) return;
+      const room=(+b.capacity||0)-gBinContents(b.id)-(pending[o.value]||0);
+      o.text=`Bin ${b.name} — ${gCropLabel(b.crop)} · ${room<0?fmt(-room)+' bu OVER':fmt(room)+' bu room'}${b.type==='overflow'?' (overflow)':''}`;
+    });
+    const hint=d.querySelector('.gl-room'); if(!hint) return;
+    const v=sel.value;
+    if(!v.startsWith('bin:')){ hint.innerHTML=''; return; }
+    const b=gBin(v.split(':')[1]); if(!b){ hint.innerHTML=''; return; }
+    const now=gBinContents(b.id), cap=+b.capacity||0, after=now+(pending[v]||0);
+    const left=cap-after;
+    hint.innerHTML=cap<=0?`<span style="color:var(--g400)">Bin ${gEsc(b.name)}: ${fmt(after)} bu after this entry</span>`
+      :left<0?`<span style="color:#dc2626;font-weight:600">⚠ Bin ${gEsc(b.name)} will be ${fmt(-left)} bu over its ${fmt(cap)} bu capacity</span>`
+      :`<span style="color:var(--g700)">Bin ${gEsc(b.name)} after this entry: <strong>${fmt(after)}</strong> of ${fmt(cap)} bu · <strong style="color:${left<cap*0.05?'#b45309':'var(--gm)'}">${fmt(left)} bu room left</strong></span>`;
+  });
+}
+// Fill the auto line with what's not assigned yet, and show the running tally
+function glRecalc(){
+  const total=parseFloat(document.getElementById('gl-total')?.value)||0;
+  const ins=[...document.querySelectorAll('#gl-splits .gl-bu')];
+  const auto=ins.find(i=>i.dataset.auto);
+  if(auto&&total>0){
+    const others=ins.filter(i=>i!==auto).reduce((a,i)=>a+(parseFloat(i.value)||0),0);
+    auto.value=Math.max(0,Math.round((total-others)*100)/100)||'';
+  }
+  const sum=ins.reduce((a,i)=>a+(parseFloat(i.value)||0),0);
+  glUpdateRoom();
+  const t=document.getElementById('gl-tally'); if(!t) return;
+  if(!total){ t.innerHTML=sum?`<span style="color:var(--g700)">Total: <strong>${fmt(sum)} bu</strong></span>`:''; return; }
+  const diff=total-sum;
+  t.innerHTML=Math.abs(diff)<0.5
+    ?`<span style="color:var(--gm);font-weight:600">✓ All ${fmt(total)} bu assigned</span>`
+    :diff>0?`<span style="color:#b45309;font-weight:600">${fmt(sum)} of ${fmt(total)} bu assigned — ${fmt(diff)} bu not assigned yet</span>`
+    :`<span style="color:#dc2626;font-weight:600">${fmt(sum)} bu assigned — ${fmt(-diff)} bu more than the field total</span>`;
 }
 function gLoadKindChanged(){
   const carry=document.getElementById('gl-kind').value==='carryin';
@@ -7880,11 +7988,8 @@ function gLoadKindChanged(){
   document.getElementById('gl-carry-box').style.display=carry?'grid':'none';
   document.getElementById('gl-acres-box').style.display=carry?'none':'';
   document.getElementById('gl-moist-box').style.display=carry?'none':'';
-  const dest=document.getElementById('gl-dest');
-  if(carry&&dest.value==='buyer'){dest.selectedIndex=0;gLoadDestChanged();}
-}
-function gLoadDestChanged(){
-  document.getElementById('gl-town-box').style.display=document.getElementById('gl-dest').value==='buyer'?'':'none';
+  document.getElementById('gl-total-lbl').textContent=carry?'Total bushels':'Total dry bushels from this field';
+  glRefreshDests();
 }
 // Shared check for putting bushels into a bin. Returns true if OK to proceed.
 function gCheckBinIn(bin,crop,bu){
@@ -7901,8 +8006,6 @@ function gCheckBinIn(bin,crop,bu){
 function gSaveLoad(){
   const g=ensureGrain();
   const kind=document.getElementById('gl-kind').value;
-  const bu=parseFloat(document.getElementById('gl-bu').value)||0;
-  if(bu<=0){alert('Enter bushels.');return;}
   const date=document.getElementById('gl-date').value||gToday();
   let crop,year,fieldId=null;
   if(kind==='harvest'){
@@ -7912,25 +8015,47 @@ function gSaveLoad(){
   }else{
     crop=document.getElementById('gl-crop').value;year=document.getElementById('gl-year').value;
   }
-  const destV=document.getElementById('gl-dest').value;
-  const rec={id:nid(g.loads),kind,date,year,crop,fieldId,bu,
-    acres:kind==='harvest'?(parseFloat(document.getElementById('gl-acres').value)||0):0,
-    moisture:kind==='harvest'?(parseFloat(document.getElementById('gl-moist').value)||0):0,
-    contractId:null,notes:document.getElementById('gl-notes').value.trim()};
-  if(destV==='buyer'){
-    if(kind==='carryin'){alert('Old crop entries must go into a bin.');return;}
-    const buyer=document.getElementById('gl-buyer').value.trim();
-    if(!buyer){alert('Enter the buyer or elevator.');return;}
-    rec.toType='buyer';rec.to=buyer;
-    rec.contractId=+document.getElementById('gl-contract').value||null;
-    if(!g.buyers.includes(buyer))g.buyers.push(buyer);
-  }else{
-    const bin=gBin(destV.split(':')[1]);
-    if(!bin){alert('Pick a bin.');return;}
-    if(!gCheckBinIn(bin,crop,bu))return;
-    rec.toType='bin';rec.to=bin.id;
+  // Read the lines (skip empty ones)
+  const lines=[...document.querySelectorAll('#gl-splits .gl-split')].map(d=>({
+    dest:d.querySelector('.gl-dest').value,
+    bu:parseFloat(d.querySelector('.gl-bu').value)||0,
+    buyer:d.querySelector('.gl-buyer').value.trim(),
+    contractId:+d.querySelector('.gl-contract').value||null
+  })).filter(l=>l.bu>0);
+  if(!lines.length){alert('Enter bushels for at least one bin or town.');return;}
+  const sum=lines.reduce((a,l)=>a+l.bu,0);
+  const total=parseFloat(document.getElementById('gl-total').value)||0;
+  if(total>0&&Math.abs(total-sum)>=0.5&&!confirm(`The lines add up to ${fmt(sum)} bu but the field total is ${fmt(total)} bu.\n\nSave ${fmt(sum)} bu anyway?`)) return;
+  // Town lines need a buyer; old crop can't go to town
+  for(const l of lines){
+    if(l.dest==='buyer'){
+      if(kind==='carryin'){alert('Old crop entries must go into a bin.');return;}
+      if(!l.buyer){alert('Enter the buyer or elevator for the town line.');return;}
+    }
   }
-  g.loads.push(rec);
+  // Bin checks — add up lines going to the same bin first
+  const perBin={};
+  lines.filter(l=>l.dest!=='buyer').forEach(l=>{const id=l.dest.split(':')[1];perBin[id]=(perBin[id]||0)+l.bu;});
+  for(const id in perBin){
+    const bin=gBin(id); if(!bin){alert('Pick a bin.');return;}
+    if(!gCheckBinIn(bin,crop,perBin[id]))return;
+  }
+  const acres=kind==='harvest'?(parseFloat(document.getElementById('gl-acres').value)||0):0;
+  const moisture=kind==='harvest'?(parseFloat(document.getElementById('gl-moist').value)||0):0;
+  const notes=document.getElementById('gl-notes').value.trim();
+  const entryId=Date.now();
+  lines.forEach(l=>{
+    const rec={id:nid(g.loads),entryId,kind,date,year,crop,fieldId,bu:l.bu,
+      acres:acres>0?Math.round(acres*l.bu/sum*100)/100:0, // share of acres by bushels → yield stays right
+      moisture,contractId:null,notes};
+    if(l.dest==='buyer'){
+      rec.toType='buyer';rec.to=l.buyer;rec.contractId=l.contractId;
+      if(!g.buyers.includes(l.buyer))g.buyers.push(l.buyer);
+    }else{
+      rec.toType='bin';rec.to=gBin(l.dest.split(':')[1]).id;
+    }
+    g.loads.push(rec);
+  });
   save();closeModal();renderGrain();
 }
 
