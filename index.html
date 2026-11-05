@@ -113,6 +113,16 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 .field-chip:hover{border-color:var(--gl);color:var(--gm)}
 .field-chip.active{background:var(--gm);color:#fff;border-color:var(--gm)}
 .field-chip .chip-crop{font-size:10px;opacity:.75;margin-left:4px}
+/* ── DASHBOARD: Needs attention ── */
+.attn{background:#fff;border:1px solid var(--g200);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px}
+.attn-title{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--g700)}
+.attn-item{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:9px 12px;border-radius:var(--r);font-size:13px;line-height:1.4;margin-bottom:6px}
+.attn-item:last-child{margin-bottom:0}
+.attn-item .attn-txt{flex:1;min-width:200px}
+.attn-item.bad{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b}
+.attn-item.warn{background:#fffbeb;border:1px solid #fcd34d;color:#92400e}
+.attn-item.good{background:#f0fdf4;border:1px solid #86efac;color:#166534}
+.attn-item.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
 @media(max-width:900px){.mg,.mg6{grid-template-columns:1fr 1fr}.g2,.g3{grid-template-columns:1fr}.fr3,.fr4,.fr5{grid-template-columns:1fr 1fr}}
 
 /* ── BOTTOM NAV (mobile only) ── */
@@ -404,6 +414,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
     <div class="tbr"><button class="btn btn-o btn-s" onclick="exportJSON()">⬇ Backup Data</button></div>
   </div>
   <div class="content">
+    <div id="db-attention"></div>
     <div class="mg" id="db-metrics"></div>
     <div class="g2" style="margin-bottom:14px">
       <div class="card" id="db-crop-split"></div>
@@ -2020,6 +2031,7 @@ function renderDashboard(){
   document.getElementById('db-sub').textContent=`${sp.farmName} — ${sp.year} Crop Year`;
   document.getElementById('sb-name').textContent=sp.farmName;
   setYearBadge();
+  renderAttention();
 
   const ohPA=getOverheadPerAcre();
   const dsPA=getDebtServicePerAcre();
@@ -2245,6 +2257,100 @@ function renderDashboard(){
       ${soyBeLines}
       <div style="font-size:10px;color:var(--g400);margin-top:6px">B/E yield = full cost/ac ÷ blended price · green = expected yield above B/E, red = below</div>
     </div>`;
+}
+
+/* ══════════ DASHBOARD: AT-A-GLANCE ══════════
+   cropSnapshot() is where the "Needs attention" checks and the
+   "Check a sale" shortcut get their numbers. It uses the same building
+   blocks as the Enterprise Summary table (fYield, getBlendedPrice,
+   getFullCostPerAcre, cashCostPA, contractStats) so the two always agree. */
+const SOY_CROPS=['soy-commercial','soy-nongmo','soy-renwick'];
+const CROP_NAMES={'corn':'Corn','soy-commercial':'SB Commercial','soy-nongmo':'SB Non-GMO','soy-renwick':'SB Renwick'};
+function cropSnapshot(crops){
+  const fields=S.fields.filter(f=>crops.includes(f.crop));
+  const ac=fields.reduce((a,f)=>a+(+f.acres||0),0);
+  if(!ac) return null;
+  const bu=fields.reduce((a,f)=>a+(+f.acres)*fYield(f),0);
+  const yld=bu/ac;
+  const rev=fields.reduce((a,f)=>a+(+f.acres)*fYield(f)*getBlendedPrice(f.crop),0);
+  const cost=fields.reduce((a,f)=>a+(+f.acres)*getFullCostPerAcre(f),0);
+  const fullCPA=cost/ac;
+  const cashCPA=cashCostPA(fullCPA,fields);
+  const market=bu>0?fields.reduce((a,f)=>a+(+f.acres)*fYield(f)*getPrice(f.crop),0)/bu:0;
+  let sold=0,soldRev=0;
+  crops.forEach(c=>{const s=contractStats(c);sold+=s.bu;soldRev+=s.rev;});
+  const srcs=fields.map(fYieldSource);
+  const yldSrc=srcs.every(s=>s==='actual')?'actual':srcs.some(s=>s!=='aph')?'incl. estimates':'APH';
+  return{fields,ac,bu,yld,yldSrc,fullCPA,cashCPA,net:rev-cost,marginPA:(rev-cost)/ac,
+    blended:bu>0?rev/bu:0,market,
+    fullBE:yld>0?fullCPA/yld:0,cashBE:yld>0?cashCPA/yld:0,
+    beYield:bu>0&&rev>0?fullCPA/(rev/bu):0,
+    sold,soldAvg:sold?soldRev/sold:0,pctSold:bu>0?sold/bu*100:0,unsold:Math.max(0,bu-sold)};
+}
+function cropTargetMargin(crop){const pw=(S.profitWatch||{})[crop];return pw&&pw.marginTarget!==undefined?+pw.marginTarget:0.20;}
+
+function renderAttention(){
+  const el=document.getElementById('db-attention'); if(!el) return;
+  const items=[]; // {lvl:'bad'|'warn'|'good'|'info', txt, btn?:[label,onclick]}
+  if(!S.fields.length){
+    items.push({lvl:'info',txt:`No fields set up for ${S.activeYear}.`,btn:['Add fields',"nav('fields',document.querySelector('.ni[onclick*=fields]'))"]});
+  }
+  // 1. Price freshness
+  const lf=S.mtm&&S.mtm.lastFetched;
+  const ageH=lf?(Date.now()-new Date(lf).getTime())/3600000:Infinity;
+  if(ageH>24){
+    items.push({lvl:'warn',txt:lf?`Market prices are ${ageH>=48?Math.floor(ageH/24)+' days':'over a day'} old — profit numbers may be off.`:'Market prices have never been refreshed — numbers use saved prices.',
+      btn:['🔄 Refresh prices','dbRefreshPrices(this)']});
+  }
+  // 2–4. Per enterprise checks
+  const belowCash=[];
+  ['corn',...SOY_CROPS].forEach(c=>{
+    const s=cropSnapshot([c]); if(!s) return;
+    const name=CROP_NAMES[c];
+    if(s.pctSold>100){
+      items.push({lvl:'bad',txt:`<strong>${name}:</strong> contracted ${Math.round(s.pctSold)}% of expected production — ${fmt(s.sold-s.bu,0)} bu more than you expect to grow.`,btn:['Review contracts',`goMarketing('${c==='corn'?'corn':'soy'}')`]});
+      return;
+    }
+    if(s.unsold<1||!(s.market>0)) return;
+    const tgt=s.fullBE+cropTargetMargin(c);
+    if(s.market>=tgt){
+      items.push({lvl:'good',txt:`<strong>${name}:</strong> market ${fmtD(s.market,2)} has reached your target ${fmtD(tgt,2)} (break-even + ${fmtD(cropTargetMargin(c),2)}). ${fmt(s.unsold,0)} bu still open.`,btn:['💡 Check a sale',`goSaleDecision('${c}')`]});
+    } else if(s.market<s.cashBE){
+      belowCash.push(`<strong>${name}</strong> ${fmtD(s.market,2)} vs ${fmtD(s.cashBE,2)}`);
+    }
+  });
+  // One combined line so several enterprises don't flood the box
+  if(belowCash.length){
+    items.push({lvl:'warn',txt:`Market is below your <strong>cash</strong> break-even — selling now loses money even before depreciation: ${belowCash.join(' · ')}`,btn:['See price targets',"goMarketing('profitwatch')"]});
+  }
+  if(!items.length) items.push({lvl:'good',txt:'✓ Nothing needs attention right now.'});
+  el.innerHTML=`<div class="attn"><div class="attn-title">⚡ Needs attention</div>${items.map(i=>`<div class="attn-item ${i.lvl}"><span class="attn-txt">${i.txt}</span>${i.btn?`<button class="btn btn-o btn-s" onclick="${i.btn[1]}">${i.btn[0]}</button>`:''}</div>`).join('')}</div>`;
+}
+async function dbRefreshPrices(btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳ Updating…';}
+  await refreshFuturesPrices();
+  if(curPage==='dashboard') renderDashboard();
+}
+function goMarketing(tab){
+  nav('marketing',document.querySelector('.ni[onclick*=marketing]'));
+  if(tab&&typeof showMktTab==='function') showMktTab(tab);
+}
+// Open Reports → Sale Decision pre-filled for one enterprise
+function goSaleDecision(crop){
+  nav('reports',document.querySelector('.ni[onclick*=reports]'));
+  showRepTab('saledecision');
+  const sel=document.getElementById('sd-crop'); if(sel) sel.value=crop;
+  const msel=document.getElementById('sd-matrix-crop'); if(msel) msel.value=crop;
+  sdCropChanged();
+  const card=document.getElementById('rep-saledecision-view'); if(card) card.scrollIntoView({block:'start'});
+}
+// When the enterprise changes, reset price & yield to that enterprise's numbers
+function sdCropChanged(){
+  const crop=document.getElementById('sd-crop')?.value||'corn';
+  const s=cropSnapshot([crop]);
+  const p=document.getElementById('sd-price'); if(p) p.value=(getPrice(crop)||0).toFixed(2);
+  const y=document.getElementById('sd-yield'); if(y&&s) y.value=Math.round(s.yld);
+  updateSaleDecision();
 }
 
 /* ══════════ APPLICATION PLAN ══════════ */
@@ -4795,7 +4901,7 @@ function renderRepSaleDecision(){
       <div class="ch"><div class="ct">💡 Is This Sale Profitable?</div><div class="cs">Punch in a price and yield scenario — get an instant answer</div></div>
       <div class="fr fr4" style="margin-bottom:14px">
         <div class="fg"><label class="fl">Enterprise</label>
-          <select class="fi" id="sd-crop" style="width:100%" onchange="updateSaleDecision()">${cropSel}</select></div>
+          <select class="fi" id="sd-crop" style="width:100%" onchange="sdCropChanged()">${cropSel}</select></div>
         <div class="fg"><label class="fl">Sale Price ($/bu)</label>
           <input class="fi" id="sd-price" type="number" step="0.01" value="${defPrice.toFixed(2)}" oninput="updateSaleDecision()" style="width:100%;font-size:15px;font-weight:600"></div>
         <div class="fg"><label class="fl">Yield Scenario (bu/ac)</label>
