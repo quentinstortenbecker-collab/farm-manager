@@ -148,6 +148,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   /* Tabs — scrollable */
   .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
   .tab{white-space:nowrap;font-size:12px;padding:7px 10px}
+  /* Wide tables: keep the crop name pinned while the numbers scroll sideways */
+  .db-ent-scroll td:first-child,.db-ent-scroll th:first-child{position:sticky;left:0;background:#fff;z-index:1}
+  .db-ent-scroll th:first-child{background:var(--g50)}
+  .db-ent-scroll td,.db-ent-scroll th{white-space:nowrap}
+  #page-dashboard .g2>*{min-width:0} /* let the card shrink so the table scrolls inside it */
   /* Bottom padding so content isn't hidden behind bottom nav */
   .main{padding-bottom:64px}
   /* Bottom nav */
@@ -169,7 +174,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   #more-menu{
     display:none;position:fixed;bottom:58px;left:0;right:0;
     background:var(--gd);border-top:1px solid rgba(255,255,255,.15);
-    z-index:49;padding:8px 0
+    z-index:49;padding:8px 0;max-height:calc(100vh - 70px);overflow-y:auto
   }
   #more-menu.open{display:block}
   .mm-item{
@@ -374,7 +379,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 <!-- MORE MENU (mobile) -->
 <div id="more-overlay" onclick="closeMoreMenu()"></div>
 <div id="more-menu">
+  <div class="mm-item" style="cursor:default"><span class="mm-ic">📅</span>Crop year
+    <select id="mm-year" class="fi" onchange="mmSelectYear(this.value)" style="width:auto;margin-left:auto;font-size:14px;padding:4px 8px"></select></div>
   <div class="mm-item" onclick="bnNav('fields',null);closeMoreMenu()"><span class="mm-ic">🌾</span>Fields</div>
+  <div class="mm-item" onclick="bnNav('inputs',null);closeMoreMenu()"><span class="mm-ic">🛒</span>Inputs &amp; Inventory</div>
   <div class="mm-item" onclick="bnNav('budgets',null);closeMoreMenu()"><span class="mm-ic">📋</span>Crop Budgets</div>
   <div class="mm-item" onclick="bnNav('reports',null);closeMoreMenu()"><span class="mm-ic">📈</span>Reports</div>
   <div class="mm-item" onclick="bnNav('equipment',null);closeMoreMenu()"><span class="mm-ic">🚜</span>Machinery</div>
@@ -385,6 +393,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   <div class="mm-item" onclick="bnNav('balance',null);closeMoreMenu()"><span class="mm-ic">📒</span>Balance Sheet</div>
   <div class="mm-item" onclick="bnNav('cashflow',null);closeMoreMenu()"><span class="mm-ic">💵</span>Cash Flow</div>
   <div class="mm-item" onclick="bnNav('settings',null);closeMoreMenu()"><span class="mm-ic">⚙️</span>Settings</div>
+  <div class="mm-item" onclick="closeMoreMenu();authSignOut()" style="border-top:1px solid rgba(255,255,255,.12)"><span class="mm-ic">↩</span>Sign out</div>
 </div>
 
 <div class="main">
@@ -1969,8 +1978,19 @@ function bnNav(page,el){
   });
 }
 function toggleMoreMenu(){
+  // Refresh the phone crop-year picker each time the menu opens
+  const sel=document.getElementById('mm-year');
+  if(sel&&S.years){
+    sel.innerHTML=Object.keys(S.years).sort().map(y=>`<option value="${y}"${y===String(S.activeYear)?' selected':''}>${y}</option>`).join('')
+      +'<option value="__add">+ Add year…</option>';
+  }
   document.getElementById('more-menu').classList.toggle('open');
   document.getElementById('more-overlay').classList.toggle('open');
+}
+function mmSelectYear(v){
+  closeMoreMenu();
+  if(v==='__add') promptAddYear();
+  else selectYear(v);
 }
 function closeMoreMenu(){
   document.getElementById('more-menu').classList.remove('open');
@@ -2092,12 +2112,19 @@ function renderDashboard(){
   const soyCommBlended=getBlendedPrice('soy-commercial');
   const cornCst=contractStats('corn');
   const soyCst=contractStatsSoyAll();
+  // All-soybean blended price, weighted by each enterprise's expected bushels
+  // (so Non-GMO / Renwick premiums count — not just SB Commercial).
+  const soyAllBlended=(()=>{
+    const fs=S.fields.filter(f=>f.crop.startsWith('soy'));
+    const bu=fs.reduce((a,f)=>a+(+f.acres)*fYield(f),0);
+    return bu>0?fs.reduce((a,f)=>a+(+f.acres)*fYield(f)*getBlendedPrice(f.crop),0)/bu:soyCommBlended;
+  })();
   const priceStrip=`<div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;margin-bottom:10px;font-size:11px;align-items:center">
     <span style="font-weight:600;color:var(--gm)">📊 Blended Price</span>
     <span style="color:var(--g400);font-size:10px">(contracted avg + unsold @ MTM)</span>
     <span>🌽 Corn: <strong>${cornBlended>0?fmtD(cornBlended,3):'—'}/bu</strong> <span style="color:var(--g400)">${cornCst.bu>0?`${fmt(cornCst.bu,0)} bu @ ${fmtD(cornCst.avg,3)} contracted`:'no contracts'}</span></span>
-    <span>🌱 Soy: <strong>${soyCommBlended>0?fmtD(soyCommBlended,3):'—'}/bu</strong> <span style="color:var(--g400)">${soyCst.bu>0?`${fmt(soyCst.bu,0)} bu contracted`:'no contracts'}</span></span>
-    ${(cornMtmEff>0||soyMtmEff>0)?`<span style="color:var(--g400)">· MTM: ${fmtD(cornMtmEff,2)} corn / ${fmtD(soyMtmEff,2)} soy · fetched ${mtm.lastFetched?new Date(mtm.lastFetched).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</span>`:'<span style="color:var(--g400)">· <a href="#" onclick="nav(\'marketing\',document.querySelectorAll(\'.ni\')[4]);setTimeout(refreshFuturesPrices,200);return false" style="color:var(--bl)">Refresh live prices for MTM →</a></span>'}
+    <span>🌱 Soy (all): <strong>${soyAllBlended>0?fmtD(soyAllBlended,3):'—'}/bu</strong> <span style="color:var(--g400)">${soyCst.bu>0?`${fmt(soyCst.bu,0)} bu @ ${fmtD(soyCst.avg,3)} contracted`:'no contracts'}</span></span>
+    ${(cornMtmEff>0||soyMtmEff>0)?`<span style="color:var(--g400)">· MTM: ${fmtD(cornMtmEff,2)} corn / ${fmtD(soyMtmEff,2)} SB Comm · fetched ${mtm.lastFetched?new Date(mtm.lastFetched).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</span>`:'<span style="color:var(--g400)">· <a href="#" onclick="nav(\'marketing\',document.querySelector(\'.ni[onclick*=marketing]\'));setTimeout(refreshFuturesPrices,200);return false" style="color:var(--bl)">Refresh live prices for MTM →</a></span>'}
   </div>`;
   // Harvest progress strip — only once something is harvested or an estimate is set
   const hvParts=[['corn','🌽 Corn'],['soy-commercial','🌱 SB Comm'],['soy-nongmo','🟢 Non-GMO'],['soy-renwick','🔵 Renwick']].map(([k,l])=>{
@@ -2123,10 +2150,10 @@ function renderDashboard(){
     </div></div>
     ${priceStrip}
     ${harvestStrip}
-    <table><thead><tr><th>Enterprise</th><th class="tr">Acres</th><th class="tr">Yield</th><th class="tr">Blended Price</th><th class="tr">Full Cost/Ac</th><th class="tr" title="Floor: every check written this year, incl. loan principal — no depreciation">Cash B/E</th><th class="tr" title="Marketing target: cash costs + real machinery depreciation">Full B/E</th><th class="tr">Margin/Ac</th></tr></thead>
+    <div class="table-scroll db-ent-scroll"><table><thead><tr><th>Enterprise</th><th class="tr">Acres</th><th class="tr">Yield</th><th class="tr">Blended Price</th><th class="tr">Full Cost/Ac</th><th class="tr" title="Floor: every check written this year, incl. loan principal — no depreciation">Cash B/E</th><th class="tr" title="Marketing target: cash costs + real machinery depreciation">Full B/E</th><th class="tr">Margin/Ac</th></tr></thead>
     <tbody>
       ${entRows}
-    </tbody></table>
+    </tbody></table></div>
     <div style="font-size:11px;color:var(--g400);margin-top:8px">Blended price = (contracted bu × avg contract price) + (unsold bu × MTM price) ÷ total bu · OH: ${fmtD(ohPA,2)}/ac · Machinery: by crop (see 🚜 Machinery) · Cash B/E = full cost − depreciation + loan principal (${fmtD(getPrincipalPerAcre(),2)}/ac)</div>
     ${(()=>{const L=machTrueLadder();return L.ac>0?`<div onclick="machTab='summary';nav('equipment',document.querySelector('.ni[onclick*=equipment]'))" style="cursor:pointer;margin-top:10px;padding:8px 12px;background:#fff;border:1px solid var(--g200);border-radius:var(--r);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;align-items:center" title="Open the Machinery cost center">🚜 <strong>Machinery</strong><span>${fmtD(L.pa(L.cash),0)}/ac cash</span><span>·</span><span><strong>${fmtD(L.pa(L.full),0)}/ac full</strong></span><span>·</span><span style="color:#b45309"><strong>${fmtD(L.pa(L.tru),0)}/ac true</strong> (${fmtD(L.tru,0)}/yr)</span><span style="margin-left:auto;color:var(--g400)">details →</span></div>`:'';})()}`;
 
@@ -2159,7 +2186,17 @@ function renderDashboard(){
   const cornUnsoldBu=Math.max(0,cornTotBu-cSt.bu);
   const soyUnsoldBu=Math.max(0,soyTotBu-sSt.bu);
   const cornMtmPrice=getMtmEffectivePrice('corn')||(+sp.cornPrice||0);
-  const soyMtmPrice=getMtmEffectivePrice('soy-commercial')||(+sp.soyCommercialPrice||0);
+  // Unsold soybeans span three enterprises with different premiums — weight each
+  // enterprise's all-in market price by its own unsold bushels.
+  const soyMtmPrice=(()=>{
+    let rem=0,val=0;
+    ['soy-commercial','soy-nongmo','soy-renwick'].forEach(k=>{
+      const bu=S.fields.filter(f=>f.crop===k).reduce((a,f)=>a+(+f.acres)*fYield(f),0);
+      const r=Math.max(0,bu-contractStats(k).bu);
+      rem+=r; val+=r*getPrice(k);
+    });
+    return rem>0?val/rem:(getMtmEffectivePrice('soy-commercial')||(+sp.soyCommercialPrice||0));
+  })();
   // Per-enterprise break-even yield: full cost/ac ÷ blended price = bu/ac needed to break even
   const calcBeYield=(cropKey)=>{
     const fields=S.fields.filter(f=>f.crop===cropKey);
@@ -3051,10 +3088,11 @@ function renderMarketing(){
   const renwickRem=Math.max(0,renwickTotBu-sRenwickSt.bu);
   const sRem=commRem+ngmoRem+renwickRem;
   const mtm=S.mtm||{};
-  const cMtmVal=cRem*((+mtm.cornPrice||0)+(+mtm.cornBasis||0));
-  const commMtmVal=commRem*((+mtm.soyCommPrice||0)+(+mtm.soyCommBasis||0));
-  const ngmoMtmVal=ngmoRem*((+mtm.soyNgmoPrice||0)+(+mtm.soyNgmoBasis||0));
-  const renwickMtmVal=renwickRem*((+mtm.soyRenwickPrice||0)+(+mtm.soyRenwickBasis||0));
+  // Same all-in market price the Dashboard uses (Non-GMO / Renwick premiums included).
+  const cMtmVal=cRem*getMtmEffectivePrice('corn');
+  const commMtmVal=commRem*getMtmEffectivePrice('soy-commercial');
+  const ngmoMtmVal=ngmoRem*getMtmEffectivePrice('soy-nongmo');
+  const renwickMtmVal=renwickRem*getMtmEffectivePrice('soy-renwick');
   const sMtmVal=commMtmVal+ngmoMtmVal+renwickMtmVal;
 
   document.getElementById('mkt-metrics').innerHTML=`
@@ -3323,17 +3361,17 @@ function updateMtm(){
   const srP=+mtm.soyRenwickPrice||0; const srB=+mtm.soyRenwickBasis||0;
   const set=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val;};
   const cEff=cP+cB;const cRemVal=d.cRem*cEff;const cPort=d.cSt.rev+cRemVal;
-  const cBlend=d.cTotBu>0?((d.cSt.bu*d.cSt.avg)+(d.cRem*cEff))/d.cTotBu:0;
+  const cBlend=getBlendedPrice('corn');
   set('mtm-corn-rem-val',fmtD(cRemVal,0));set('mtm-corn-port',fmtD(cPort,0));set('mtm-corn-blend',fmtD(cBlend,2)+'/bu');
   const scEff=scP+scB;const scRV=d.commRem*scEff;const scPort=d.sCommSt.rev+scRV;
-  const scBlend=d.commTotBu>0?((d.sCommSt.bu*d.sCommSt.avg)+(d.commRem*scEff))/d.commTotBu:0;
+  const scBlend=getBlendedPrice('soy-commercial');
   set('mtm-scomm-rem-val',fmtD(scRV,0));set('mtm-scomm-port',fmtD(scPort,0));set('mtm-scomm-blend',fmtD(scBlend,2)+'/bu');
   const ngPrem=+(S.settings.nongmoPremium)||0;
   const snEff=snP+snB+ngPrem;const snRV=d.ngmoRem*snEff;const snPort=d.sNgmoSt.rev+snRV;
-  const snBlend=d.ngmoTotBu>0?((d.sNgmoSt.bu*d.sNgmoSt.avg)+(d.ngmoRem*snEff))/d.ngmoTotBu:0;
+  const snBlend=getBlendedPrice('soy-nongmo');
   set('mtm-sngmo-rem-val',fmtD(snRV,0));set('mtm-sngmo-port',fmtD(snPort,0));set('mtm-sngmo-blend',fmtD(snBlend,2)+'/bu');
   const srEff=srP+srB+getRenwickPremium();const srRV=d.renwickRem*srEff;const srPort=d.sRenwickSt.rev+srRV;
-  const srBlend=d.renwickTotBu>0?((d.sRenwickSt.bu*d.sRenwickSt.avg)+(d.renwickRem*srEff))/d.renwickTotBu:0;
+  const srBlend=getBlendedPrice('soy-renwick');
   set('mtm-srenwick-rem-val',fmtD(srRV,0));set('mtm-srenwick-port',fmtD(srPort,0));set('mtm-srenwick-blend',fmtD(srBlend,2)+'/bu');
 }
 function renderMktSummary(cSt,sSt,cTotBu,sTotBu){
@@ -4747,11 +4785,10 @@ function renderRepSaleDecision(){
   // default to corn values
   const defaultCrop='corn';
   const defFields=S.fields.filter(f=>f.crop===defaultCrop);
-  const defAc=defFields.reduce((a,f)=>a+(+f.acres),0)||870.4;
-  const defAph=defFields.length?defFields.reduce((a,f)=>a+fYield(f),0)/defFields.length:229;
-  const defVarCPA=defFields.length?defFields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/defAc:0;
-  const defFullCPA=defVarCPA+ohPA+machPAFields(defFields);
-  const defPrice=getPrice(defaultCrop)||4.48;
+  const defAc=defFields.reduce((a,f)=>a+(+f.acres),0)||1;
+  // Acre-weighted expected yield — same basis as the Dashboard
+  const defAph=defFields.length?defFields.reduce((a,f)=>a+fYield(f)*(+f.acres),0)/defAc:0;
+  const defPrice=getPrice(defaultCrop)||0;
 
   document.getElementById('rep-saledecision-view').innerHTML=`
     <div class="card" style="margin-bottom:14px">
@@ -4794,7 +4831,7 @@ function updateSaleDecision(){
   const fields=S.fields.filter(f=>f.crop===crop);
   const ac=fields.reduce((a,f)=>a+(+f.acres),0)||1;
   const inputCPA=fields.length?fields.reduce((a,f)=>a+(+f.acres)*getFieldCostPerAcre(f),0)/ac:0;
-  const rentCPA=fields.length?fields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/ac:275;
+  const rentCPA=fields.length?fields.reduce((a,f)=>a+(+f.acres)*(+f.landCost||0),0)/ac:0;
   const fullCPA=inputCPA+rentCPA+ohPA+machPAFields(fields);
   const inputBE=yld>0?inputCPA/yld:0;
   const fullBE=yld>0?fullCPA/yld:0;
@@ -5060,7 +5097,10 @@ function getBlendedPrice(cropType){
 
   const remBu = Math.max(0, totalBu - soldBu);
   if(totalBu <= 0) return effPrice;
-  return (soldRev + remBu * effPrice) / totalBu;
+  // Oversold (contracts exceed expected production): only expected bushels can be
+  // delivered, so value them at the average contract price — never above it.
+  const soldRevCapped = soldBu > totalBu ? soldRev * (totalBu / soldBu) : soldRev;
+  return (soldRevCapped + remBu * effPrice) / totalBu;
 }
 
 function renderRepFieldCost(){
