@@ -3115,15 +3115,68 @@ function renderMarketing(){
   renderMktSummary(cSt,sSt,cTotBu,sTotBu);
   showMktTab(activeMktTab);
 }
+/* ── CONTRACT DELIVERY STATUS ──
+   A contract is ✓ Delivered when you check it off by hand (c.completed) or when
+   bushels linked to it in Grain & Bins reach the contract amount. Partially hauled
+   contracts show bushels delivered so far. Status never changes the money math —
+   a delivered contract still counts as sold for its crop year. */
+let mktHideDone = localStorage.getItem('fpm_mkt_hide_done')==='1';
+function contractDeliveredBu(c){
+  const g=S.grain; if(!g) return 0;
+  return gSum((g.loads||[]).filter(l=>l.toType==='buyer'&&+l.contractId===+c.id),l=>l.bu)
+        +gSum((g.deliveries||[]).filter(d=>+d.contractId===+c.id),d=>d.bu);
+}
+function contractStatus(c){
+  const bu=+c.bu||0, del=contractDeliveredBu(c);
+  const auto=bu>0&&del>=bu;
+  if(c.completed||auto) return{key:'done',auto:auto&&!c.completed,del,bu,left:0};
+  return{key:del>0?'partial':'open',del,bu,left:Math.max(0,bu-del)};
+}
+function contractStatusCell(c){
+  const s=contractStatus(c);
+  const pill=s.key==='done'?`<span class="b bg">✓ Delivered</span>`
+    :s.key==='partial'?`<span class="b ba" title="Delivered so far (linked in Grain & Bins)">${fmt(s.del)} / ${fmt(s.bu)} bu</span>`
+    :`<span class="b bx">Open</span>`;
+  const tip=s.auto?'Filled by deliveries linked in Grain & Bins':'Check when this contract is fully delivered and settled';
+  return`<td style="white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:6px;cursor:${s.auto?'default':'pointer'}" title="${tip}">
+    <input type="checkbox" ${s.key==='done'?'checked':''} ${s.auto?'disabled':''} onchange="setContractDone(${c.id},this.checked)">${pill}</label></td>`;
+}
+function setContractDone(id,done){
+  const c=S.contracts.find(x=>x.id===id); if(!c) return;
+  c.completed=!!done;
+  c.completedDate=done?new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'';
+  save(); renderMarketing();
+}
+function toggleMktHideDone(){
+  mktHideDone=!mktHideDone;
+  try{localStorage.setItem('fpm_mkt_hide_done',mktHideDone?'1':'0');}catch(e){}
+  renderMarketing();
+}
+// "3 of 6 delivered · 20,000 bu left to deliver" + Hide/Show delivered button
+function contractDeliverySummary(cs){
+  if(!cs.length) return {txt:'',btn:''};
+  const st=cs.map(contractStatus);
+  const done=st.filter(s=>s.key==='done').length;
+  const left=st.reduce((a,s)=>a+s.left,0);
+  return{
+    txt:`<strong>${done} of ${cs.length}</strong> delivered · <strong>${fmt(left,0)} bu</strong> left to deliver`,
+    btn:done?`<button class="btn btn-o btn-s" onclick="toggleMktHideDone()">${mktHideDone?`Show delivered (${done})`:`Hide delivered (${done})`}</button>`:''
+  };
+}
+
 function renderContractTable(crop,totBu,aph){
   const cs=S.contracts.filter(c=>c.crop===crop&&_sameYear(c));
   const bu=cs.reduce((a,c)=>a+(+c.bu),0);
   const rev=cs.reduce((a,c)=>a+(+c.bu)*(contractFinalPrice(c)),0);
   const avg=bu?rev/bu:0;
+  const dsum=contractDeliverySummary(cs);
   let rows='';
   cs.forEach(c=>{
+    const done=contractStatus(c).key==='done';
+    if(done&&mktHideDone) return;
     const finalPrice=contractFinalPrice(c);
-    rows+=`<tr>
+    rows+=`<tr style="${done?'opacity:.6':''}">
+      ${contractStatusCell(c)}
       <td><span class="ie" onclick="editC(${c.id},'date','${c.date}',this)">${c.date}</span></td>
       <td><select class="fi" style="font-size:11px;padding:2px 4px;width:auto" onchange="editCF(${c.id},'type',this.value)">${['Cash Sale','Forward Contract','HTA','Hedge','Basis Contract','Options'].map(t=>`<option ${c.type===t?'selected':''}>${t}</option>`).join('')}</select></td>
       <td><span class="ie" onclick="editC(${c.id},'elevator','${(c.elevator||'').replace(/'/g,"&#39;")}')">${c.elevator||'—'}</span></td>
@@ -3136,12 +3189,13 @@ function renderContractTable(crop,totBu,aph){
       <td><span class="ie" onclick="editC(${c.id},'notes','${(c.notes||'').replace(/'/g,"&#39;")}')">${c.notes||'—'}</span></td>
       <td class="tc"><button class="btn btn-r btn-s" onclick="deleteC(${c.id})">✕</button></td></tr>`;
   });
-  document.getElementById(`mkt-${crop}-view`).innerHTML=`<div class="card"><div class="ch"><div><div class="ct">${crop==='corn'?'Corn':'Soybean'} Contracts</div>
-    <div class="cs">${fmt(bu)} bu · avg final ${fmtD(avg,2)} · ${pct(bu,totBu)}% of est. production</div></div></div>
-    <table><thead><tr><th>Date</th><th>Type</th><th>Elevator</th><th class="tr">Bushels</th><th class="tr">Futures</th><th class="tr">Basis</th><th class="tr">Premium</th><th class="tr">Final $/bu</th><th>Yr</th><th>Notes</th><th></th></tr></thead>
-    <tbody>${rows}</tbody>
-    <tfoot><tr class="tot"><td colspan="3">Totals</td><td class="tr">${fmt(bu)} bu</td><td colspan="3"></td><td class="tr">${fmtD(avg,2)} avg</td><td colspan="3" style="color:var(--gm)">Revenue: ${fmtD(rev,0)}</td></tr></tfoot>
-    </table></div>`;
+  document.getElementById(`mkt-${crop}-view`).innerHTML=`<div class="card"><div class="ch" style="flex-wrap:wrap"><div><div class="ct">${crop==='corn'?'Corn':'Soybean'} Contracts</div>
+    <div class="cs">${fmt(bu)} bu · avg final ${fmtD(avg,2)} · ${pct(bu,totBu)}% of est. production</div>
+    ${dsum.txt?`<div class="cs" style="color:var(--g700);margin-top:3px">🚚 ${dsum.txt}</div>`:''}</div>${dsum.btn}</div>
+    <div class="table-scroll"><table><thead><tr><th>Status</th><th>Date</th><th>Type</th><th>Elevator</th><th class="tr">Bushels</th><th class="tr">Futures</th><th class="tr">Basis</th><th class="tr">Premium</th><th class="tr">Final $/bu</th><th>Yr</th><th>Notes</th><th></th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="12" style="text-align:center;padding:14px;color:var(--g400)">${cs.length?'All contracts delivered — click "Show delivered" to see them':'No contracts logged yet'}</td></tr>`}</tbody>
+    <tfoot><tr class="tot"><td colspan="4">Totals (all contracts)</td><td class="tr">${fmt(bu)} bu</td><td colspan="3"></td><td class="tr">${fmtD(avg,2)} avg</td><td colspan="3" style="color:var(--gm)">Revenue: ${fmtD(rev,0)}</td></tr></tfoot>
+    </table></div></div>`;
 }
 function renderSoyContractTable(sCommSt,sNgmoSt,sRenwickSt,commTotBu,ngmoTotBu,renwickTotBu){
   const enterprises=[
@@ -3152,10 +3206,14 @@ function renderSoyContractTable(sCommSt,sNgmoSt,sRenwickSt,commTotBu,ngmoTotBu,r
   let html='';
   enterprises.forEach(({key,label,st,totBu})=>{
     const cs=S.contracts.filter(c=>c.crop===key&&_sameYear(c));
+    const dsum=contractDeliverySummary(cs);
     let rows='';
     cs.forEach(c=>{
+      const done=contractStatus(c).key==='done';
+      if(done&&mktHideDone) return;
       const finalPrice=contractFinalPrice(c);
-      rows+=`<tr>
+      rows+=`<tr style="${done?'opacity:.6':''}">
+        ${contractStatusCell(c)}
         <td><span class="ie" onclick="editC(${c.id},'date','${c.date}',this)">${c.date}</span></td>
         <td><select class="fi" style="font-size:11px;padding:2px 4px;width:auto" onchange="editCF(${c.id},'type',this.value)">${['Cash Sale','Forward Contract','HTA','Hedge','Basis Contract','Options'].map(t=>`<option ${c.type===t?'selected':''}>${t}</option>`).join('')}</select></td>
         <td><span class="ie" onclick="editC(${c.id},'elevator','${(c.elevator||'').replace(/'/g,"&#39;")}')">${c.elevator||'—'}</span></td>
@@ -3169,12 +3227,13 @@ function renderSoyContractTable(sCommSt,sNgmoSt,sRenwickSt,commTotBu,ngmoTotBu,r
         <td class="tc"><button class="btn btn-r btn-s" onclick="deleteC(${c.id})">✕</button></td></tr>`;
     });
     html+=`<div class="card" style="margin-bottom:12px">
-      <div class="ch"><div><div class="ct">${label}</div>
-      <div class="cs">${fmt(st.bu)} bu sold · avg ${fmtD(st.avg,2)} · ${pct(st.bu,totBu)}% of ${fmt(totBu,0)} bu est.</div></div></div>
-      <table><thead><tr><th>Date</th><th>Type</th><th>Elevator</th><th class="tr">Bushels</th><th class="tr">Futures</th><th class="tr">Basis</th><th class="tr">Premium</th><th class="tr">Final $/bu</th><th>Yr</th><th>Notes</th><th></th></tr></thead>
-      <tbody>${rows||`<tr><td colspan="11" style="text-align:center;padding:14px;color:var(--g400)">No contracts logged for ${label}</td></tr>`}</tbody>
-      ${st.bu>0?`<tfoot><tr class="tot"><td colspan="3">Totals</td><td class="tr">${fmt(st.bu)} bu</td><td colspan="3"></td><td class="tr">${fmtD(st.avg,2)} avg</td><td colspan="3" style="color:var(--gm)">Revenue: ${fmtD(st.rev,0)}</td></tr></tfoot>`:''}
-      </table></div>`;
+      <div class="ch" style="flex-wrap:wrap"><div><div class="ct">${label}</div>
+      <div class="cs">${fmt(st.bu)} bu sold · avg ${fmtD(st.avg,2)} · ${pct(st.bu,totBu)}% of ${fmt(totBu,0)} bu est.</div>
+      ${dsum.txt?`<div class="cs" style="color:var(--g700);margin-top:3px">🚚 ${dsum.txt}</div>`:''}</div>${dsum.btn}</div>
+      <div class="table-scroll"><table><thead><tr><th>Status</th><th>Date</th><th>Type</th><th>Elevator</th><th class="tr">Bushels</th><th class="tr">Futures</th><th class="tr">Basis</th><th class="tr">Premium</th><th class="tr">Final $/bu</th><th>Yr</th><th>Notes</th><th></th></tr></thead>
+      <tbody>${rows||`<tr><td colspan="12" style="text-align:center;padding:14px;color:var(--g400)">${cs.length?'All contracts delivered — click "Show delivered" to see them':`No contracts logged for ${label}`}</td></tr>`}</tbody>
+      ${st.bu>0?`<tfoot><tr class="tot"><td colspan="4">Totals (all contracts)</td><td class="tr">${fmt(st.bu)} bu</td><td colspan="3"></td><td class="tr">${fmtD(st.avg,2)} avg</td><td colspan="3" style="color:var(--gm)">Revenue: ${fmtD(st.rev,0)}</td></tr></tfoot>`:''}
+      </table></div></div>`;
   });
   document.getElementById('mkt-soy-view').innerHTML=html;
 }
@@ -7683,7 +7742,7 @@ function gRenderPosition(yr){
     const del=gContractDelivered(c.id),rem=(+c.bu||0)-del;
     return`<tr><td>${gEsc(c.date)}</td><td>${cropLabel(c.crop)}</td><td>${gEsc(c.type)}</td><td>${gEsc(c.elevator||'—')}</td><td>${gEsc(c.delivery||'—')}</td>
       <td class="tr">${fmt(c.bu)}</td><td class="tr">${del?fmt(del):'—'}</td>
-      <td class="tr" style="font-weight:600;color:${rem<=0?'var(--gm)':'var(--g700)'}">${rem<=0?'✓ filled':fmt(rem)}</td></tr>`;
+      <td class="tr" style="font-weight:600;color:${rem<=0||c.completed?'var(--gm)':'var(--g700)'}">${rem<=0?'✓ filled':c.completed?'✓ complete':fmt(rem)}</td></tr>`;
   }).join('');
 
   return`<div class="g2">${cards}</div>
@@ -8056,7 +8115,7 @@ function bsGrain(){
     const inn=gSum(g.loads.filter(l=>l.toType==='bin'&&l.crop===crop&&l.year===year),l=>l.bu);
     const outB=gSum(g.deliveries.filter(d=>d.crop===crop&&d.year===year),d=>d.bu);
     const bu=inn-outB;if(bu<0.5)return;
-    const open=(S.contracts||[]).filter(c=>c.crop===crop&&String(c.year)===String(year)).map(c=>({c,open:Math.max(0,(+c.bu||0)-gContractDelivered(c.id))})).filter(x=>x.open>0);
+    const open=(S.contracts||[]).filter(c=>c.crop===crop&&String(c.year)===String(year)&&!c.completed).map(c=>({c,open:Math.max(0,(+c.bu||0)-gContractDelivered(c.id))})).filter(x=>x.open>0);
     const openBu=open.reduce((a,x)=>a+x.open,0),priced=Math.min(bu,openBu);
     const pPrice=openBu>0?open.reduce((a,x)=>a+x.open*contractFinalPrice(x.c),0)/openBu:0;
     const mkt=getMtmEffectivePrice(crop)||getPrice(crop)||0;
@@ -8771,7 +8830,7 @@ function cfGrain(fy,nAct,soldBy){
     const tt=Object.values(types).reduce((a,b)=>a+b,0);
     const mkt=tt>0?Object.entries(types).reduce((a,[c,v])=>a+v*(getPrice(c)||0),0)/tt:(getPrice(g==='corn'?'corn':'soy-commercial')||0);
     const bu=Array(12).fill(0),dol=Array(12).fill(0);
-    const open=(S.contracts||[]).filter(c=>isG(c.crop)&&+c.year<=+cy).map(c=>({c,open:Math.max(0,(+c.bu||0)-(typeof gContractDelivered==='function'?gContractDelivered(c.id):0))})).filter(x=>x.open>0);
+    const open=(S.contracts||[]).filter(c=>isG(c.crop)&&+c.year<=+cy&&!c.completed).map(c=>({c,open:Math.max(0,(+c.bu||0)-(typeof gContractDelivered==='function'?gContractDelivered(c.id):0))})).filter(x=>x.open>0);
     let contracted=0,flexBu=0,flexDol=0;
     const pat=(()=>{const p=CF_LY_BU[g],t=p.reduce((a,b)=>a+b,0);return t>0?p.map(v=>v/t):null;})();
     open.forEach(x=>{if(left<=0)return;const q=Math.min(x.open,left);left-=q;contracted+=q;
