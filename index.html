@@ -277,6 +277,62 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 </style>
+<style>
+/* ══════════ WEATHER (15-day forecast) ══════════ */
+.wx-sheet{background:#fff;border:1px solid var(--g200);border-radius:var(--rl);padding:14px 18px 16px;margin-bottom:14px}
+.wx-top{display:flex;justify-content:space-between;font-size:12px;color:var(--g700);gap:10px}
+.wx-top .c{flex:1;text-align:center}
+.wx-titlebar{display:flex;justify-content:space-between;align-items:flex-end;margin:8px 0 6px;gap:10px;flex-wrap:wrap}
+.wx-titlebar h2{font-size:24px;font-weight:700;color:#333;margin:0}
+.wx-legend{font-size:18px;font-weight:600;color:#444;white-space:nowrap}
+.wx-legend i{display:inline-block;width:5px;height:18px;background:#e2596b;vertical-align:-3px;margin-right:7px}
+.wx-table{table-layout:fixed;min-width:760px}
+.wx-table th{text-transform:none;letter-spacing:0;font-weight:400;font-size:12px;line-height:1.25;color:#8a8f96;background:#fff;border:2px solid #333;border-left-width:1px;border-right-width:1px;text-align:center;white-space:normal;padding:4px 2px}
+.wx-table td{text-align:center;font-size:14px;padding:4px 2px;border-bottom:2px solid #333;line-height:1.3;color:#2b2b2b}
+.wx-table td+td{border-left:1px solid #ddd}
+.wx-table tr:last-child td{border-bottom:1px solid #ddd}
+.wx-table td.wx-day{color:#9a9a9a;font-weight:700;font-size:13px;text-align:right;padding-right:9px;line-height:1.15;background:#fff}
+.wx-table td.wx-day span{font-weight:400}
+.wx-table td.wx-day.flag{box-shadow:inset -5px 0 0 #e2596b}
+.wx-table td.wx-cond{padding:2px 4px}
+.wx-cond-in{display:flex;align-items:center;gap:6px}
+.wx-cond-in svg{flex:0 0 auto}
+.wx-cond-in span{flex:1;text-align:center}
+.wx-table td.hl span{background:linear-gradient(transparent 12%,#fff36b 12%,#fff36b 88%,transparent 88%);padding:0 5px}
+.wx-foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--g700);margin-top:10px}
+.wx-acc table td,.wx-acc table th{text-align:center}
+.wx-acc table td:first-child,.wx-acc table th:first-child{text-align:left}
+.wx-acc p{font-size:12px;color:var(--g700);margin:4px 0 10px;line-height:1.5}
+/* Dashboard strip */
+.wx-strip{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.wx-sd{flex:1 0 92px;border:1px solid var(--g200);border-radius:var(--r);padding:6px 6px 7px;text-align:center;font-size:12px;cursor:pointer;background:#fff}
+.wx-sd:hover{background:var(--g50)}
+.wx-sd.flag{border-color:#e2596b;box-shadow:inset 0 3px 0 #e2596b}
+.wx-sd .d{font-weight:600;color:var(--g700)}
+.wx-sd .t{font-size:14px;font-weight:600}
+.wx-sd .p{color:#1e40af;font-size:11px;min-height:14px}
+.wx-sd .w{color:#991b1b;font-size:10px;font-weight:600;min-height:12px}
+@media(max-width:640px){
+  .wx-sheet{padding:10px 8px}
+  .wx-m-hide{display:none}
+  .wx-table{min-width:0}
+  .wx-titlebar h2{font-size:18px}.wx-legend{font-size:13px}.wx-legend i{height:13px}
+  .wx-table td{font-size:13px}
+  .wx-table td.wx-day{position:sticky;left:0;z-index:1}
+  .wx-cond-in svg{width:34px;height:32px}
+}
+@page wxportrait{size:letter portrait;margin:.35in}
+@media print{
+  #page-weather.active{page:wxportrait}
+  .wx-noprint{display:none!important}
+  .wx-sheet{border:none;padding:0;margin:0}
+  .wx-table{min-width:0}
+  .wx-table td{font-size:13px!important;padding:3px 2px}
+  .wx-table th{font-size:11px!important}
+  .wx-table td.wx-day{font-size:12px!important}
+  .wx-m-hide{display:table-cell!important}
+}
+</style>
 </head>
 <body>
 <!-- AUTH SCREEN -->
@@ -345,6 +401,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   <div class="nsec">
     <div class="nlbl">Overview</div>
     <div class="ni active" onclick="nav('dashboard',this)"><span class="ic">📊</span><span>Dashboard</span></div>
+    <div class="ni" onclick="nav('weather',this)"><span class="ic">🌦️</span><span>Weather</span></div>
   </div>
   <div class="nsec">
     <div class="nlbl">Fields &amp; Operations</div>
@@ -405,6 +462,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 <div id="more-menu">
   <div class="mm-item" style="cursor:default"><span class="mm-ic">📅</span>Crop year
     <select id="mm-year" class="fi" onchange="mmSelectYear(this.value)" style="width:auto;margin-left:auto;font-size:14px;padding:4px 8px"></select></div>
+  <div class="mm-item" onclick="bnNav('weather',null);closeMoreMenu()"><span class="mm-ic">🌦️</span>Weather</div>
   <div class="mm-item" onclick="bnNav('fields',null);closeMoreMenu()"><span class="mm-ic">🌾</span>Fields</div>
   <div class="mm-item" onclick="bnNav('inputs',null);closeMoreMenu()"><span class="mm-ic">🛒</span>Inputs &amp; Inventory</div>
   <div class="mm-item" onclick="bnNav('loans',null);closeMoreMenu()"><span class="mm-ic">🏦</span>Loans</div>
@@ -432,6 +490,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   </div>
   <div class="content">
     <div id="db-attention"></div>
+    <div id="db-weather"></div>
     <div class="mg" id="db-metrics"></div>
     <div class="db-grid">
       <div class="card" id="db-crop-split"></div>
@@ -618,6 +677,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 <!-- PLANTING FORECAST -->
 <div id="page-plantforecast" class="page">
   <div id="pf-main"></div>
+</div>
+
+<!-- WEATHER (15-day forecast) -->
+<div id="page-weather" class="page">
+  <div id="wx-main"></div>
 </div>
 
 <!-- SETTINGS -->
@@ -2050,7 +2114,8 @@ function renderPage(p){
   const map={dashboard:renderDashboard,appplan:renderAppPlanPage,inputs:renderInputsPage,budgets:renderBudgets,
     fields:renderFields,marketing:renderMarketing,equipment:renderEquipment,
     overhead:renderOverhead,loans:renderLoans,reports:renderReports,
-    croptracker:renderCropTracker,plantforecast:renderPlantForecast,grain:renderGrain,balance:renderBalance,cashflow:renderCashflow,settings:renderSettingsPage};
+    croptracker:renderCropTracker,plantforecast:renderPlantForecast,grain:renderGrain,balance:renderBalance,cashflow:renderCashflow,settings:renderSettingsPage,
+    weather:renderWeather};
   if(map[p])map[p]();
 }
 
@@ -2071,6 +2136,7 @@ function renderDashboard(){
   document.getElementById('sb-name').textContent=sp.farmName;
   setYearBadge();
   renderAttention();
+  try{ renderWxStrip(); }catch(e){ console.warn('Weather strip:',e); }
 
   const tAc=S.fields.reduce((a,f)=>a+(+f.acres),0)||1;
   const totRev=S.fields.reduce((a,f)=>a+(+f.acres)*getFieldRevPA(f),0);
@@ -9605,6 +9671,337 @@ function renderCashflow(){
         <tr class="tot"><td>${R.fed-R.fedPaid>=0?'Still to pay':'Overpaid'}</td><td class="tr">${fmtD(Math.abs(R.fed-R.fedPaid),0)}</td></tr>
       </tbody></table></div>
   </div>`;
+}
+
+/* ══════════ WEATHER — 15-day forecast (DTN-style) ══════════
+   Forecast: weighted blend of the NWS National Blend of Models, ECMWF and GFS (Open-Meteo, free).
+   Accuracy: Open-Meteo's archive of earlier forecasts vs. what the ISU research-farm station near
+   Kanawha actually recorded. Nothing here is saved to farm data, so it can never cause a save
+   conflict between devices. */
+const WX={
+  lat:43.03642, lon:-93.77456,               // 43°02'11.1"N 93°46'28.4"W
+  place:'Hancock Co., IA', tz:'America/Chicago', days:15,
+  models:[
+    {id:'ncep_nbm_conus', name:'NWS Blend (NBM)', weight:2},
+    {id:'ecmwf_ifs025',   name:'ECMWF',           weight:2},
+    {id:'gfs_seamless',   name:'GFS',             weight:1},
+  ],
+  // Red "Exceeds Threshold" bar when any of these hit (null = off)
+  thresholds:{freezeLowF:32, windMph:20, heatHighF:null},
+  highlightPop:60,                            // yellow highlight on precip chance/amount at or above this %
+  gdd:{base:50, cap:86},
+  obsStations:[
+    {id:'KNAI4', network:'ISUSM',   name:'Kanawha (ISU research farm)'},
+    {id:'FXY',   network:'IA_ASOS', name:'Forest City airport'},
+  ],
+  data:null, used:[], failed:[], fetchedAt:0, loading:null, err:null,
+  acc:null, accLoading:false, accErr:null,
+};
+const WX_DAILY=['weather_code','temperature_2m_max','temperature_2m_min','apparent_temperature_max',
+  'apparent_temperature_min','wind_speed_10m_max','wind_direction_10m_dominant','dew_point_2m_mean',
+  'relative_humidity_2m_mean','precipitation_probability_max','precipitation_sum','snowfall_sum',
+  'et0_fao_evapotranspiration','cloud_cover_mean'];
+
+const wxR0=v=>v==null?null:Math.round(v);
+const wxCompass=d=>d==null?'':['N','NE','E','SE','S','SW','W','NW'][Math.round(d/45)%8];
+const wxTodayStr=()=>new Date().toLocaleDateString('en-CA',{timeZone:WX.tz});
+const wxDayNum=s=>{const[y,m,d]=s.split('-').map(Number);return Date.UTC(y,m-1,d)/864e5;};
+const wxDow=s=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(wxDayNum(s)*864e5).getUTCDay()];
+const wxMD=s=>s.slice(5,7)+'/'+s.slice(8,10);
+
+async function wxFetchModel(m){
+  const p=new URLSearchParams({latitude:WX.lat,longitude:WX.lon,daily:WX_DAILY.join(','),
+    temperature_unit:'fahrenheit',wind_speed_unit:'mph',precipitation_unit:'inch',
+    timezone:WX.tz,forecast_days:16,models:m.id});
+  const r=await fetch('https://api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(15000)});
+  if(!r.ok) throw new Error(m.name+': HTTP '+r.status);
+  return {model:m,daily:(await r.json()).daily};
+}
+// Weighted average across models; models with no value that day are skipped.
+function wxBlend(res,field,i){
+  let s=0,w=0;
+  for(const{model,daily}of res){const v=daily[field]&&daily[field][i];if(v!=null&&!Number.isNaN(v)){s+=v*model.weight;w+=model.weight;}}
+  return w?s/w:null;
+}
+function wxBlendDir(res,i){
+  let x=0,y=0;
+  for(const{model,daily}of res){
+    const d=daily.wind_direction_10m_dominant&&daily.wind_direction_10m_dominant[i],s=daily.wind_speed_10m_max&&daily.wind_speed_10m_max[i];
+    if(d==null||s==null)continue;
+    const r=d*Math.PI/180;x+=Math.sin(r)*s*model.weight;y+=Math.cos(r)*s*model.weight;
+  }
+  return(!x&&!y)?null:(Math.atan2(x,y)*180/Math.PI+360)%360;
+}
+function wxCond(d){
+  const thunder=d.thunder&&d.pop>=20, snowLiq=(d.snow||0)/10;
+  let type='Rain';
+  if(thunder)type='T-Storms';
+  else if(d.snow>=0.1&&snowLiq>=0.6*d.precip)type='Snow';
+  else if(d.snow>=0.1)type='Rain/Snow';
+  const kind=type==='T-Storms'?'storm':type==='Snow'?'snow':type==='Rain/Snow'?'mix':'rain';
+  if(d.pop>=60&&d.precip>=0.05)return{text:type+' Likely',icon:kind,heavy:true};
+  if(d.pop>=40&&d.precip>=0.02)return{text:'Scattered '+type+' Possible',icon:kind};
+  if(d.pop>=30&&d.precip>=0.02)return{text:type+' Possible',icon:kind};
+  if(d.pop>=20&&d.precip>=0.01)return{text:'Isolated '+type+' Possible',icon:kind};
+  const c=d.cloud==null?50:d.cloud;
+  if(c<20)return{text:'Sunny',icon:'sun'};
+  if(c<50)return{text:'Partly Cloudy',icon:'partly'};
+  if(c<80)return{text:'Mostly Cloudy',icon:'mostly'};
+  return{text:'Cloudy',icon:'cloud'};
+}
+function wxIcon(kind,heavy,w){
+  w=w||52; const h=Math.round(w*48/52);
+  const sun=(cx,cy,r)=>`<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fbbf3c" stroke="#f0a43a" stroke-width="1"/>`;
+  const cloud=(dx,dy,f)=>`<path transform="translate(${dx},${dy})" d="M10 30 a8 8 0 0 1 2-15.5 a11 11 0 0 1 21-3 a8 8 0 0 1 11 7.5 a6 6 0 0 1-1 11z" fill="${f||'#eef1f5'}" stroke="#b9c0ca" stroke-width="1.3"/>`;
+  const drops=n=>Array.from({length:n},(_,k)=>`<line x1="${14+k*8}" y1="36" x2="${12+k*8}" y2="42" stroke="#3d7bd9" stroke-width="2.4" stroke-linecap="round"/>`).join('');
+  const flakes=n=>Array.from({length:n},(_,k)=>`<text x="${11+k*9}" y="45" font-size="11" fill="#5b8fd6">✱</text>`).join('');
+  const bolt=`<path d="M27 31 l-6 9 h5 l-3 8 l9-11 h-5 l3-6z" fill="#f6c52b" stroke="#d99a00" stroke-width=".8"/>`;
+  let b='';
+  switch(kind){
+    case'sun':b=sun(26,24,13);break;
+    case'partly':b=sun(24,21,13)+cloud(4,10);break;
+    case'mostly':b=sun(20,16,11)+cloud(2,8)+cloud(8,12);break;
+    case'cloud':b=cloud(2,6,'#e7ebf0')+cloud(8,10);break;
+    case'rain':b=(heavy?'':sun(32,12,8))+cloud(2,4,heavy?'#cfd6df':null)+drops(heavy?4:3);break;
+    case'storm':b=cloud(2,4,heavy?'#8d97a6':'#cfd6df')+drops(3)+bolt;break;
+    case'snow':b=cloud(2,4)+flakes(4);break;
+    case'mix':b=cloud(2,4)+drops(2)+`<text x="30" y="45" font-size="11" fill="#5b8fd6">✱</text>`;break;
+  }
+  return `<svg width="${w}" height="${h}" viewBox="0 0 52 48" aria-hidden="true">${b}</svg>`;
+}
+function wxBuildDays(res){
+  const times=(res.find(r=>r.daily&&r.daily.time)||{daily:{time:[]}}).daily.time;
+  const out=[], t=WX.thresholds, g=WX.gdd, cl=v=>Math.min(Math.max(v,g.base),g.cap);
+  for(let i=0;i<Math.min(WX.days,times.length);i++){
+    const hi=wxR0(wxBlend(res,'temperature_2m_max',i)), lo=wxR0(wxBlend(res,'temperature_2m_min',i));
+    if(hi==null||lo==null)continue;
+    const d={date:times[i],hi,lo,
+      fhi:wxR0(wxBlend(res,'apparent_temperature_max',i)),flo:wxR0(wxBlend(res,'apparent_temperature_min',i)),
+      wind:wxR0(wxBlend(res,'wind_speed_10m_max',i)),dir:wxCompass(wxBlendDir(res,i)),
+      dew:wxR0(wxBlend(res,'dew_point_2m_mean',i)),rh:wxR0(wxBlend(res,'relative_humidity_2m_mean',i)),
+      pop:wxR0(wxBlend(res,'precipitation_probability_max',i))||0,
+      precip:wxBlend(res,'precipitation_sum',i)||0, snow:wxBlend(res,'snowfall_sum',i)||0,
+      et:wxBlend(res,'et0_fao_evapotranspiration',i), cloud:wxBlend(res,'cloud_cover_mean',i),
+      thunder:res.some(r=>((r.daily.weather_code||[])[i]||0)>=95),
+      models:res.filter(r=>r.daily.temperature_2m_max&&r.daily.temperature_2m_max[i]!=null).map(r=>r.model.name)};
+    d.gdd=Math.max(0,(cl(hi)+cl(lo))/2-g.base);
+    d.cond=wxCond(d);
+    d.flags=[];
+    if(t.freezeLowF!=null&&lo<=t.freezeLowF)d.flags.push({long:`Low ≤ ${t.freezeLowF}°F`,short:'❄ Freeze'});
+    if(t.windMph!=null&&d.wind!=null&&d.wind>=t.windMph)d.flags.push({long:`Wind ≥ ${t.windMph} mph`,short:'💨 Wind'});
+    if(t.heatHighF!=null&&hi>=t.heatHighF)d.flags.push({long:`High ≥ ${t.heatHighF}°F`,short:'🔥 Heat'});
+    out.push(d);
+  }
+  return out;
+}
+function wxLoad(force){
+  if(WX.loading)return WX.loading;
+  if(!force&&WX.data&&Date.now()-WX.fetchedAt<30*60e3)return Promise.resolve(WX.data);
+  WX.loading=(async()=>{
+    try{
+      const settled=await Promise.allSettled(WX.models.map(wxFetchModel));
+      const res=settled.filter(s=>s.status==='fulfilled').map(s=>s.value);
+      WX.failed=settled.map((s,i)=>s.status==='rejected'?WX.models[i].name:null).filter(Boolean);
+      if(!res.length)throw new Error('no forecast models responded');
+      const days=wxBuildDays(res);
+      if(!days.length)throw new Error('forecast came back empty');
+      WX.data=days; WX.used=res.map(r=>r.model.name); WX.fetchedAt=Date.now(); WX.err=null;
+    }catch(e){WX.err=e.message||String(e);}
+    finally{WX.loading=null;}
+    wxRerender();
+    return WX.data;
+  })();
+  if(curPage==='weather')renderWeather(); // show "Refreshing…"
+  return WX.loading;
+}
+function wxRerender(){
+  if(curPage==='weather')renderWeather();
+  if(curPage==='dashboard')renderWxStrip();
+}
+function wxThreshText(){
+  const t=WX.thresholds,p=[];
+  if(t.freezeLowF!=null)p.push(`low ≤ ${t.freezeLowF}°F`);
+  if(t.windMph!=null)p.push(`wind ≥ ${t.windMph} mph`);
+  if(t.heatHighF!=null)p.push(`high ≥ ${t.heatHighF}°F`);
+  return `Threshold: ${p.join(', ')||'none'} · Highlight: precip chance ≥ ${WX.highlightPop}% · GDD base ${WX.gdd.base}/${WX.gdd.cap}`;
+}
+function wxTableHtml(days){
+  const W=(pct,hide)=>`style="width:${pct}%"${hide?' class="wx-m-hide"':''}`;
+  const head=`<thead><tr><th ${W(7.5)}>Day</th><th ${W(21.5)}>Weather Conditions</th><th ${W(7.1)}>High /<br>Low<br>(°F)</th>
+    <th ${W(7.1,1)}>Feels<br>like<br>(°F)</th><th ${W(7.1)}>Wind<br>(mph)</th><th ${W(7.1,1)}>Dew<br>Point<br>(°F)</th>
+    <th ${W(7.1,1)}>Humid<br>ity (%)</th><th ${W(7.1)}>Precip<br>Chanc<br>e (%)</th><th ${W(7.1)}>Precip<br>Liquid<br>(in.)</th>
+    <th ${W(7.1,1)}>Precip<br>Snow<br>(in.)</th><th ${W(7.1)}>GDD<br>(°F)</th><th ${W(7.1,1)}>Evap<br>in.</th></tr></thead>`;
+  const rows=days.map(d=>{
+    const hl=d.pop>=WX.highlightPop?' hl':'', showPop=d.pop>=15||d.precip>=0.01;
+    return `<tr title="Models: ${d.models.join(', ')}">
+      <td class="wx-day${d.flags.length?' flag':''}" title="${d.flags.map(f=>f.long).join('; ')}">${wxMD(d.date)}<br><span>${wxDow(d.date)}</span></td>
+      <td class="wx-cond"><div class="wx-cond-in">${wxIcon(d.cond.icon,d.cond.heavy)}<span>${d.cond.text}</span></div></td>
+      <td>${d.hi}<br>${d.lo}</td>
+      <td class="wx-m-hide">${d.fhi==null?'-':d.fhi}<br>${d.flo==null?'-':d.flo}</td>
+      <td>${d.wind==null?'-':d.wind}<br>${d.dir}</td>
+      <td class="wx-m-hide">${d.dew==null?'-':d.dew}</td>
+      <td class="wx-m-hide">${d.rh==null?'-':d.rh}</td>
+      <td class="${hl}"><span>${showPop?d.pop:'-'}</span></td>
+      <td class="${hl}"><span>${d.precip.toFixed(2)}</span></td>
+      <td class="wx-m-hide">${d.snow>=0.05?d.snow.toFixed(1):'-'}</td>
+      <td>${d.gdd.toFixed(1)}</td>
+      <td class="wx-m-hide">${d.et==null?'-':d.et.toFixed(2)}</td></tr>`;
+  }).join('');
+  return `<table class="wx-table">${head}<tbody>${rows}</tbody></table>`;
+}
+function renderWeather(){
+  const el=document.getElementById('wx-main'); if(!el)return;
+  if(!WX.data&&!WX.loading&&!WX.err)wxLoad();
+  if(WX.data&&!WX.acc&&!WX.accLoading&&!WX.accErr)wxScore();
+  const upd=WX.fetchedAt?new Date(WX.fetchedAt):null;
+  const stamp=upd?upd.toLocaleString('en-US',{month:'numeric',day:'numeric',year:'2-digit',hour:'numeric',minute:'2-digit'}):'';
+  let status=WX.loading?'Refreshing…':upd?'Updated '+upd.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
+  if(WX.err&&WX.data)status+=' · last refresh failed';
+  if(WX.failed.length)status+=' · missing: '+WX.failed.join(', ');
+  let body;
+  if(WX.data)body=wxTableHtml(WX.data);
+  else if(WX.err)body=`<div style="padding:30px;text-align:center;color:#991b1b">Couldn't load the forecast (${WX.err}). Check the internet connection and press Refresh.</div>`;
+  else body=`<div style="padding:30px;text-align:center;color:var(--g400)">Loading forecast…</div>`;
+  el.innerHTML=`
+    <div class="topbar"><div><h1>🌦️ Weather</h1><div class="sub">15-day forecast · ${WX.place}${status?' · '+status:''}</div></div>
+      <div class="tbr"><button class="btn btn-o btn-s" onclick="wxLoad(true)">⟳ Refresh</button>
+        <button class="btn btn-p btn-s" onclick="window.print()">🖨 Print</button></div></div>
+    <div class="content">
+      <div class="wx-sheet">
+        <div class="wx-top"><span>${stamp}</span><span class="c">Local Forecast - ${WX.place} (${WX.lat.toFixed(4)}, ${WX.lon.toFixed(4)})</span><span style="width:80px"></span></div>
+        <div class="wx-titlebar"><h2>15 DAY FORECAST</h2><div class="wx-legend"><i></i>Exceeds Threshold</div></div>
+        <div class="table-scroll">${body}</div>
+        <div class="wx-foot"><span>Blend of ${(WX.used.length?WX.used:WX.models.map(m=>m.name)).join(', ')} · via Open-Meteo</span><span>${wxThreshText()}</span></div>
+      </div>
+      ${wxAccHtml()}
+    </div>`;
+}
+
+/* ── Dashboard strip: next 7 days ── */
+function renderWxStrip(){
+  const el=document.getElementById('db-weather'); if(!el)return;
+  if(!WX.data&&!WX.loading&&!WX.err)wxLoad();
+  if(!WX.data){
+    el.innerHTML=WX.err?'':`<div class="card" style="padding:10px 14px;font-size:12px;color:var(--g400)">🌦️ Loading weather…</div>`;
+    return;
+  }
+  el.innerHTML=`<div class="card" style="padding:12px 14px">
+    <div class="ch" style="margin-bottom:8px"><div class="ct">🌦️ Weather — next 7 days</div>
+      <span style="font-size:12px;color:var(--gm);cursor:pointer;font-weight:600;white-space:nowrap" onclick="bnNav('weather',null)">15-day forecast →</span></div>
+    <div class="wx-strip">${WX.data.slice(0,7).map(d=>`
+      <div class="wx-sd${d.flags.length?' flag':''}" onclick="bnNav('weather',null)" title="${d.cond.text}${d.flags.length?' — '+d.flags.map(f=>f.long).join('; '):''}">
+        <div class="d">${wxDow(d.date)} ${wxMD(d.date)}</div>
+        ${wxIcon(d.cond.icon,d.cond.heavy,34)}
+        <div class="t">${d.hi}° / ${d.lo}°</div>
+        <div class="p">${d.pop>=20?'💧 '+d.pop+'%'+(d.precip>=0.01?' · '+d.precip.toFixed(2)+'"':''):''}</div>
+        <div class="w">${d.flags.map(f=>f.short).join(' ')}</div>
+      </div>`).join('')}</div></div>`;
+}
+
+/* ── Accuracy: earlier forecasts vs. what actually happened ── */
+async function wxFetchObs(st,months){
+  const obs={};
+  for(const ym of months){
+    const[y,m]=ym.split('-');
+    const r=await fetch(`https://mesonet.agron.iastate.edu/api/1/daily.json?station=${st.id}&network=${st.network}&year=${y}&month=${+m}`,{signal:AbortSignal.timeout(15000)});
+    if(!r.ok)continue;
+    for(const row of((await r.json()).data||[])){
+      if(row.max_tmpf==null||row.min_tmpf==null)continue;
+      obs[row.date]={hi:row.max_tmpf,lo:row.min_tmpf,p:row.precip==null||row.precip===''?null:+row.precip};
+    }
+  }
+  return obs;
+}
+async function wxScore(){
+  if(WX.accLoading)return;
+  WX.accLoading=true; WX.accErr=null;
+  try{
+    const L=[1,2,3,4,5,6,7];
+    const hourly=[...L.map(n=>'temperature_2m_previous_day'+n),...L.map(n=>'precipitation_previous_day'+n)].join(',');
+    const settled=await Promise.allSettled(WX.models.map(async m=>{
+      const p=new URLSearchParams({latitude:WX.lat,longitude:WX.lon,hourly,past_days:31,forecast_days:1,
+        temperature_unit:'fahrenheit',precipitation_unit:'inch',timezone:WX.tz,models:m.id});
+      const r=await fetch('https://previous-runs-api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(20000)});
+      if(!r.ok)throw new Error(m.name+' HTTP '+r.status);
+      return{model:m,h:(await r.json()).hourly};
+    }));
+    const runs=settled.filter(s=>s.status==='fulfilled').map(s=>s.value);
+    if(!runs.length)throw new Error('earlier forecasts are unavailable right now');
+    const today=wxTodayStr();
+    // fc[lead][date] → weighted sums across models
+    const fc={};
+    for(const{model,h}of runs){
+      for(const n of L){
+        const T=h['temperature_2m_previous_day'+n],P=h['precipitation_previous_day'+n];
+        if(!T)continue;
+        const by={};
+        h.time.forEach((t,i)=>{
+          const d=t.slice(0,10); if(d>=today)return;
+          const b=by[d]||(by[d]={t:[],p:0,pn:0});
+          if(T[i]!=null)b.t.push(T[i]);
+          if(P&&P[i]!=null){b.p+=P[i];b.pn++;}
+        });
+        for(const[d,v]of Object.entries(by)){
+          if(v.t.length<20)continue;
+          const o=fc[n]||(fc[n]={}), e=o[d]||(o[d]={w:0,hi:0,lo:0,p:0,pw:0});
+          e.w+=model.weight; e.hi+=Math.max(...v.t)*model.weight; e.lo+=Math.min(...v.t)*model.weight;
+          if(v.pn>=20){e.p+=v.p*model.weight;e.pw+=model.weight;}
+        }
+      }
+    }
+    const get=(n,d)=>{const e=fc[n]&&fc[n][d];return e&&e.w?{hi:e.hi/e.w,lo:e.lo/e.w,p:e.pw?e.p/e.pw:null}:null;};
+    const dates=[...new Set(Object.values(fc).flatMap(o=>Object.keys(o)))].sort();
+    if(!dates.length)throw new Error('no earlier forecasts found');
+    const months=[...new Set(dates.map(d=>d.slice(0,7)))];
+    let st=null,obs={};
+    for(const s of WX.obsStations){
+      try{obs=await wxFetchObs(s,months);}catch(e){obs={};}
+      if(Object.keys(obs).length){st=s;break;}
+    }
+    if(!st)throw new Error('weather station readings are unavailable right now');
+    const buckets=[['1 day ahead',1,1],['2–3 days ahead',2,3],['4–7 days ahead',4,7]].map(([name,a,b])=>({name,a,b,n:0,hiE:0,loE:0,hiB:0,loB:0,wet:0,wetHit:0,alarm:0,falseAlarm:0,frz:0,frzHit:0}));
+    for(const b of buckets)for(let n=b.a;n<=b.b;n++)for(const d of dates){
+      const f=get(n,d),o=obs[d]; if(!f||!o)continue;
+      b.n++; b.hiE+=Math.abs(f.hi-o.hi); b.loE+=Math.abs(f.lo-o.lo); b.hiB+=f.hi-o.hi; b.loB+=f.lo-o.lo;
+      if(o.lo<=32){b.frz++; if(f.lo<=34)b.frzHit++;}
+      if(o.p!=null&&f.p!=null){
+        if(o.p>=0.05){b.wet++; if(f.p>=0.03)b.wetHit++;}
+        if(f.p>=0.10){b.alarm++; if(o.p<0.01)b.falseAlarm++;}
+      }
+    }
+    const recent=dates.filter(d=>obs[d]&&get(1,d)).slice(-10).reverse().map(d=>({d,f:get(1,d),o:obs[d]}));
+    WX.acc={station:st,buckets,recent,from:dates[0],to:dates[dates.length-1],models:runs.map(r=>r.model.name)};
+  }catch(e){WX.accErr=e.message||String(e);}
+  finally{WX.accLoading=false;}
+  if(curPage==='weather')renderWeather();
+}
+function wxAccHtml(){
+  const head=`<div class="ch"><div class="ct">How accurate has this forecast been?</div>
+    ${WX.acc||WX.accErr?`<button class="btn btn-o btn-s" onclick="WX.acc=null;WX.accErr=null;wxScore();renderWeather()">⟳ Re-check</button>`:''}</div>`;
+  let body;
+  if(WX.accErr)body=`<p>Couldn't check accuracy: ${WX.accErr}.</p>`;
+  else if(!WX.acc)body=`<p>Checking the last 30 days of forecasts against actual weather…</p>`;
+  else{
+    const A=WX.acc,f1=v=>v.toFixed(1),sg=v=>(v>=0?'+':'')+v.toFixed(1),r2=v=>v==null?'-':v.toFixed(2);
+    body=`<p>Each day's earlier forecast (same model blend as above) compared with what the <b>${A.station.name}</b> station actually recorded,
+      ${wxMD(A.from)}–${wxMD(A.to)}. “Off by” is the average miss in degrees; bias “+” means the forecast ran too warm.</p>
+      <div class="table-scroll"><table><thead><tr><th>Forecast made</th><th>Days</th><th>High off by</th><th>Low off by</th>
+        <th>Bias high / low</th><th>Freeze nights warned</th><th>Rain days caught</th><th>Rain called, stayed dry</th></tr></thead><tbody>
+      ${A.buckets.map(b=>b.n?`<tr><td>${b.name}</td><td>${b.n}</td><td>${f1(b.hiE/b.n)}°</td><td>${f1(b.loE/b.n)}°</td>
+        <td>${sg(b.hiB/b.n)}° / ${sg(b.loB/b.n)}°</td><td>${b.frz?b.frzHit+' of '+b.frz:'none'}</td>
+        <td>${b.wet?b.wetHit+' of '+b.wet:'no rain days'}</td><td>${b.alarm?b.falseAlarm+' of '+b.alarm:'-'}</td></tr>`
+        :`<tr><td>${b.name}</td><td colspan="7" style="color:var(--g400)">not enough data</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="ct" style="margin:14px 0 6px;font-size:13px">Last 10 days — forecast made the day before vs. actual</div>
+      <div class="table-scroll"><table><thead><tr><th>Day</th><th>Forecast high / low</th><th>Actual high / low</th><th>Forecast rain</th><th>Actual rain</th></tr></thead><tbody>
+      ${A.recent.map(r=>`<tr><td>${wxDow(r.d)} ${wxMD(r.d)}</td><td>${Math.round(r.f.hi)}° / ${Math.round(r.f.lo)}°</td>
+        <td>${Math.round(r.o.hi)}° / ${Math.round(r.o.lo)}°</td><td>${r2(r.f.p)}"</td><td>${r2(r.o.p)}"</td></tr>`).join('')}
+      </tbody></table></div>
+      <p style="margin-top:8px;color:var(--g400)">Freeze nights warned = actual low 32° or colder and the forecast low was 34° or colder.
+      Rain day = 0.05" or more measured. The station's rain gauge isn't heated, so snow and winter precipitation can read low.
+      Days 8–15 can't be scored this way; treat them as a general trend.</p>`;
+  }
+  return `<div class="card wx-acc wx-noprint">${head}${body}</div>`;
 }
 
 /* ══════════ INIT ══════════ */
