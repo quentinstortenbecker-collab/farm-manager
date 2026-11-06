@@ -321,6 +321,34 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 .wx-hr .wet{background:#fff36b!important}
 .wx-hr-note{font-size:11.5px;color:var(--g700);margin:8px 0 0;line-height:1.7}
 .wx-hr-note span{padding:1px 6px;border-radius:2px;margin-right:4px}
+/* Spray column */
+.wx-hr td.spray{font-size:11.5px;font-weight:600}
+.wx-hr td.spray.good,.wx-hr-note .spray.good{background:#c9efd2!important;color:#14532d}
+.wx-hr td.spray.inv,.wx-hr-note .spray.inv{background:#fde4c4!important;color:#7c3a00}
+.wx-hr td.spray.bad{color:#9a9a9a;font-weight:400}
+.wx-spraywin{font-size:12.5px;margin:0 0 8px;padding:6px 10px;background:#eefaf1;border:1px solid #bfe6c9;border-radius:var(--r);color:#14532d;line-height:1.5}
+/* Rain trend (15-day sheet, website only) */
+.wx-table tr.wx-click{cursor:pointer}
+.wx-table tr.wx-click:hover td{background:#f7f9fb}
+.wx-table tr.wx-click.open td{background:#eef4fb}
+.wx-tr{font-style:normal;font-size:10px;margin-left:3px;vertical-align:1px}
+.wx-tr.up{color:#1d4ed8}.wx-tr.down{color:#b45309}
+.wx-table tr.wx-trend-row td{padding:0;border-bottom:2px solid #333;background:#f7f9fb;text-align:left}
+.wx-tp{padding:10px 14px 8px;font-size:12.5px;color:#2b2b2b}
+.wx-tp-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-bottom:6px}
+.wx-tp-why{color:var(--g700);font-size:12px}
+.wx-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#e5e7eb;color:#374151}
+.wx-badge.up{background:#dbeafe;color:#1e40af}.wx-badge.down{background:#fef3c7;color:#92400e}
+.wx-badge.bounce{background:#fde2e4;color:#991b1b}.wx-badge.steady{background:#dcfce7;color:#166534}
+.wx-tp table{width:auto;min-width:0;border-collapse:collapse;font-size:12.5px}
+.wx-tp th{font-size:10.5px;padding:3px 10px;text-align:center;border:none;border-bottom:1px solid var(--g200);background:none;color:var(--g700)}
+.wx-tp td{padding:2px 10px;text-align:center;border:none!important;font-size:12.5px}
+.wx-tp td:first-child{text-align:left}
+.wx-tp tr.now td{font-weight:700}
+.wx-tp td.bar{width:140px;padding-left:4px}
+.wx-tp td.bar i{display:block;height:9px;background:#3d7bd9;border-radius:2px}
+.wx-tp-note{font-size:11px;color:var(--g400);margin:6px 0 0}
+.wx-trendhint{font-size:11.5px;color:var(--g700);margin-top:6px}
 /* Dashboard strip */
 .wx-strip{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
 .wx-sd{flex:1 0 92px;border:1px solid var(--g200);border-radius:var(--r);padding:6px 6px 7px;text-align:center;font-size:12px;cursor:pointer;background:#fff}
@@ -355,6 +383,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   .wx-table td.wx-day{font-size:12px!important}
   .wx-m-hide{display:table-cell!important}
   .wx-cond-in svg{width:44px;height:41px}
+  .wx-table tr.wx-click td{background:#fff!important}
   .wx-soilnow{font-size:10.5px;margin-bottom:4px}
   .wx-foot{font-size:10px;margin-top:6px}
 }
@@ -9708,6 +9737,10 @@ const WX={
   lat:43.03642, lon:-93.77456,               // 43°02'11.1"N 93°46'28.4"W
   place:'Hancock Co., IA', tz:'America/Chicago', days:15,
   hours:72, hrStep:1, hrData:null,             // 72-hour hourly look-ahead (website only, not printed)
+  // Spray hours in the 72-hour table (common label guidance — adjust to your products)
+  spray:{windMin:3, windMax:10, gustMax:15, tempMin:40, tempMax:85, rainFreeHrs:4, popMax:30},
+  // Rain trend: how each day's rain forecast changed over the last 7 days of model runs (website only)
+  trend:null, trendLoading:false, trendErr:null, trendOpen:null, trendRuns:7,
   models:[
     {id:'ncep_nbm_conus', name:'NWS Blend (NBM)', weight:2},
     {id:'ecmwf_ifs025',   name:'ECMWF',           weight:2},
@@ -9937,7 +9970,8 @@ function wxTableHtml(days){
     <th ${W(c,1)}>Precip<br>Snow<br>(in.)</th><th ${W(c)}>GDD<br>(°F)</th><th ${W(c)}>4" Soil<br>Temp<br>(°F)</th><th ${W(c,1)}>Evap<br>in.</th></tr></thead>`;
   const rows=days.map(d=>{
     const hl=d.pop>=WX.highlightPop?' hl':'', showPop=d.pop>=15||d.precip>=0.01;
-    return `<tr title="Models: ${d.models.join(', ')}">
+    const open=WX.trendOpen===d.date;
+    return `<tr class="wx-click${open?' open':''}" title="Click to see how this day's rain forecast has changed · Models: ${d.models.join(', ')}" onclick="wxToggleTrend('${d.date}')">
       <td class="wx-day${d.flags.length?' flag':''}" title="${d.flags.map(f=>f.long).join('; ')}">${wxMD(d.date)}<br><span>${wxDow(d.date)}</span></td>
       <td class="wx-cond"><div class="wx-cond-in">${wxIcon(d.cond.icon,d.cond.heavy)}<span>${d.cond.text}</span></div></td>
       <td>${d.hi}<br>${d.lo}</td>
@@ -9946,11 +9980,11 @@ function wxTableHtml(days){
       <td class="wx-m-hide">${d.dew==null?'-':d.dew}</td>
       <td class="wx-m-hide">${d.rh==null?'-':d.rh}</td>
       <td class="${hl}"><span>${showPop?d.pop:'-'}</span></td>
-      <td class="${hl}"><span>${d.precip.toFixed(2)}</span></td>
+      <td class="${hl}"><span>${d.precip.toFixed(2)}</span>${wxTrendArrow(d.date)}</td>
       <td class="wx-m-hide">${d.snow>=0.05?d.snow.toFixed(1):'-'}</td>
       <td>${d.gdd.toFixed(1)}</td>
       <td class="${d.soil!=null&&d.soil<WX.soilColdF?'soil-cold':''}" title="${d.soilRange?'Daily range '+d.soilRange+'°F · '+d.soilParts:''}"><span>${d.soil==null?'-':d.soil}</span></td>
-      <td class="wx-m-hide">${d.et==null?'-':d.et.toFixed(2)}</td></tr>`;
+      <td class="wx-m-hide">${d.et==null?'-':d.et.toFixed(2)}</td></tr>${open?wxTrendPanel(d.date):''}`;
   }).join('');
   return `<table class="wx-table">${head}<tbody>${rows}</tbody></table>`;
 }
@@ -9970,6 +10004,7 @@ function renderWeather(){
   const el=document.getElementById('wx-main'); if(!el)return;
   if(!WX.data&&!WX.loading&&!WX.err)wxLoad();
   if(WX.data&&!WX.acc&&!WX.accLoading&&!WX.accErr)wxScore();
+  if(WX.data&&!WX.trend&&!WX.trendLoading&&!WX.trendErr)wxLoadTrend();
   const upd=WX.fetchedAt?new Date(WX.fetchedAt):null;
   const stamp=upd?upd.toLocaleString('en-US',{month:'numeric',day:'numeric',year:'2-digit',hour:'numeric',minute:'2-digit'}):'';
   let status=WX.loading?'Refreshing…':upd?'Updated '+upd.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
@@ -9981,7 +10016,7 @@ function renderWeather(){
   else body=`<div style="padding:30px;text-align:center;color:var(--g400)">Loading forecast…</div>`;
   el.innerHTML=`
     <div class="topbar"><div><h1>🌦️ Weather</h1><div class="sub">15-day forecast · ${WX.place}${status?' · '+status:''}</div></div>
-      <div class="tbr"><button class="btn btn-o btn-s" onclick="wxLoad(true)">⟳ Refresh</button>
+      <div class="tbr"><button class="btn btn-o btn-s" onclick="WX.trend=null;WX.trendErr=null;wxLoad(true)">⟳ Refresh</button>
         <button class="btn btn-p btn-s" onclick="window.print()">🖨 Print</button></div></div>
     <div class="content">
       <div class="wx-sheet">
@@ -9989,6 +10024,7 @@ function renderWeather(){
         <div class="wx-titlebar"><h2>15 DAY FORECAST</h2><div class="wx-legend"><i></i>Exceeds Threshold<span class="sb"></span>Soil &lt; ${WX.soilColdF}°F</div></div>
         ${wxSoilNowHtml()}
         <div class="table-scroll">${body}</div>
+        ${WX.data?`<div class="wx-trendhint wx-noprint">Click any day to see how its rain forecast has changed over the past week. ▲▼ next to the rain amount = noticeably up or down from yesterday's forecast.</div>`:''}
         <div class="wx-foot"><span>Blend of ${(WX.used.length?WX.used:WX.models.map(m=>m.name)).join(', ')} · via Open-Meteo · 4" soil: daily avg projected by ECMWF + GFS blend, actual from ISU Soil Moisture Network</span><span>${wxThreshText()}</span></div>
       </div>
       ${wxHourlyHtml()}
@@ -10094,6 +10130,141 @@ async function wxScore(){
   finally{WX.accLoading=false;}
   if(curPage==='weather')renderWeather();
 }
+/* ── Rain trend: same day, forecast made 0–7 days ago (website only) ──
+   Open-Meteo's Previous Runs API keeps each model's earlier runs, so no storage is needed.
+   ECMWF has amounts but no chance-of-rain there, so chance blends NWS Blend + GFS only. */
+async function wxFetchTrendModel(m){
+  const N=WX.trendRuns, v=['precipitation','precipitation_probability'];
+  for(let n=1;n<=N;n++)v.push('precipitation_previous_day'+n,'precipitation_probability_previous_day'+n);
+  const p=new URLSearchParams({latitude:WX.lat,longitude:WX.lon,hourly:v.join(','),precipitation_unit:'inch',
+    timezone:WX.tz,forecast_days:16,models:m.id});
+  const r=await fetch('https://previous-runs-api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(20000)});
+  if(!r.ok)throw new Error(m.name+': HTTP '+r.status);
+  const h=(await r.json()).hourly||{}, out={};   // out[date][n]={amt,pop}
+  for(let n=0;n<=N;n++){
+    const A=h[n?'precipitation_previous_day'+n:'precipitation']||[], P=h[n?'precipitation_probability_previous_day'+n:'precipitation_probability']||[];
+    const by={};
+    (h.time||[]).forEach((t,i)=>{
+      const k=t.slice(0,10), o=by[k]||(by[k]={s:0,na:0,p:null});
+      if(A[i]!=null){o.s+=A[i];o.na++;}
+      if(P[i]!=null)o.p=Math.max(o.p??0,P[i]);
+    });
+    for(const k in by){
+      const o=by[k]; if(o.na<24&&o.p==null)continue;
+      (out[k]=out[k]||{})[n]={amt:o.na>=24?o.s:null,pop:o.p};
+    }
+  }
+  return {model:m,days:out};
+}
+async function wxLoadTrend(){
+  if(WX.trendLoading)return; WX.trendLoading=true; WX.trendErr=null;
+  try{
+    const settled=await Promise.allSettled(WX.models.map(wxFetchTrendModel));
+    const res=settled.filter(s=>s.status==='fulfilled').map(s=>s.value);
+    if(!res.length)throw new Error('forecast history not available');
+    const today=wxTodayStr(), T={};
+    for(let i=0;i<WX.days;i++){
+      // previous_dayN = the forecast made N days before the target day (lead N). Only N > i are
+      // real past forecasts (made before today); the service fills later ones in, so skip them.
+      // n=0 is the latest forecast. Each entry's n is "days before today it was made".
+      const date=new Date((wxDayNum(today)+i)*864e5).toISOString().slice(0,10), list=[];
+      for(let N=WX.trendRuns;N>=0;N--){
+        if(N!==0&&N<=i)continue;
+        let sa=0,wa=0,sp=0,wp=0;
+        res.forEach(r=>{const x=r.days[date]&&r.days[date][N];if(!x)return;
+          if(x.amt!=null){sa+=x.amt*r.model.weight;wa+=r.model.weight;}
+          if(x.pop!=null){sp+=x.pop*r.model.weight;wp+=r.model.weight;}});
+        if(!wa&&!wp)continue;
+        const n=N===0?0:N-i;
+        list.push({n,made:new Date((wxDayNum(today)-n)*864e5).toISOString().slice(0,10),lead:N===0?i:N,
+          amt:wa?sa/wa:null,pop:wp?Math.round(sp/wp):null});
+      }
+      T[date]=list;
+    }
+    WX.trend=T;
+  }catch(e){WX.trendErr=e.message||String(e);}
+  finally{WX.trendLoading=false;}
+  if(curPage==='weather')renderWeather();
+}
+// Building / Fading / Bouncing / Steady, judged across the runs (oldest → newest)
+function wxTrendVerdict(list){
+  const L=(list||[]).filter(x=>x.amt!=null||x.pop!=null);
+  if(L.length<3)return{k:'na',label:'Not enough history',text:'Fewer than 3 earlier forecasts reach this far out.'};
+  const p=L.map(x=>x.pop??0), a=L.map(x=>x.amt??0), mxP=Math.max(...p), mxA=Math.max(...a);
+  if(mxP<20&&mxA<0.05)return{k:'dry',label:'Dry',text:'No real rain in any forecast over the past week.'};
+  const sw=s=>s.slice(1).reduce((t,v,i)=>t+Math.abs(v-s[i]),0);
+  const netP=p.at(-1)-p[0], revP=sw(p)-Math.abs(netP), netA=a.at(-1)-a[0], revA=(sw(a)-Math.abs(netA))/Math.max(mxA,0.1);
+  const up=netP>=15||(netA>=0.1&&a.at(-1)>=1.5*a[0]), down=netP<=-15||(netA<=-0.1&&a.at(-1)<=0.67*a[0]);
+  if(revP>=30||(mxA>=0.1&&revA>=0.8))return{k:'bounce',label:'Bouncing',text:'Has jumped up and down from one forecast to the next — lower confidence.'};
+  if(up&&down)return{k:'bounce',label:'Mixed',text:'Chance and amount are moving in opposite directions — lower confidence.'};
+  if(up)return{k:'up',label:'Building',text:'Chance and/or amount have grown as the day gets closer — more likely.'};
+  if(down)return{k:'down',label:'Fading',text:'Has been dropping as the day gets closer — less likely.'};
+  return{k:'steady',label:'Steady',text:'Forecasts have held about the same all week.'};
+}
+// ▲/▼ next to the sheet's rain amount when today's forecast moved noticeably from yesterday's
+function wxTrendArrow(date){
+  const L=WX.trend&&WX.trend[date]; if(!L)return'';
+  const t=L.find(x=>x.n===0), y=L.find(x=>x.n===1); if(!t||!y||t.amt==null||y.amt==null)return'';
+  const dA=t.amt-y.amt, dP=(t.pop??0)-(y.pop??0), thr=Math.max(0.05,0.25*y.amt);
+  const dir=dA>=thr||(dP>=10&&dA>=0)?'up':dA<=-thr||(dP<=-10&&dA<=0)?'down':'';
+  if(!dir)return'';
+  return `<i class="wx-tr ${dir} wx-noprint" title="Yesterday's forecast: ${y.pop??'-'}%, ${y.amt.toFixed(2)}&quot;">${dir==='up'?'▲':'▼'}</i>`;
+}
+function wxToggleTrend(date){
+  WX.trendOpen=WX.trendOpen===date?null:date;
+  if(!WX.trend&&!WX.trendLoading)wxLoadTrend();
+  renderWeather();
+}
+function wxTrendPanel(date){
+  let inner;
+  if(WX.trendErr)inner=`<p>Couldn't load forecast history (${WX.trendErr}).</p>`;
+  else if(!WX.trend)inner=`<p>Loading forecast history…</p>`;
+  else{
+    const L=WX.trend[date]||[], v=wxTrendVerdict(L), mx=Math.max(0.1,...L.map(x=>x.amt||0));
+    inner=`<div class="wx-tp-head"><b>Rain forecast for ${wxDow(date)} ${wxMD(date)} — how it changed</b>
+        <span class="wx-badge ${v.k}">${v.label}</span><span class="wx-tp-why">${v.text}</span></div>
+      ${L.length?`<table><thead><tr><th>Forecast made</th><th>Days out</th><th>Chance</th><th>Amount</th><th></th></tr></thead><tbody>
+      ${L.map(x=>`<tr${x.n===0?' class="now"':''}><td>${x.n===0?'Today':wxDow(x.made)+' '+wxMD(x.made)}</td><td>${x.lead}</td>
+        <td>${x.pop==null?'-':x.pop+'%'}</td><td>${x.amt==null?'-':x.amt.toFixed(2)+'"'}</td>
+        <td class="bar"><i style="width:${x.amt?Math.max(2,Math.round(x.amt/mx*100)):0}%"></i></td></tr>`).join('')}
+      </tbody></table>`:''}
+      <p class="wx-tp-note">Each row is what the forecast said for this day when it was made. Chance blends NWS Blend + GFS; amount blends all three models.
+        The free service only keeps forecasts made up to ${WX.trendRuns} days before each day, so days 6+ out don't have much history yet — check back as they get closer.</p>`;
+  }
+  return `<tr class="wx-trend-row wx-noprint"><td colspan="13"><div class="wx-tp">${inner}</div></td></tr>`;
+}
+
+/* ── Spray hours (72-hour table) ── */
+// Returns {k:'good'|'inv'|'bad'|'night', t:short label}. i = index into the hourly list.
+function wxSprayHour(list,i){
+  const h=list[i], S=WX.spray, hr=+h.t.slice(11,13);
+  const ahead=list.slice(i,i+S.rainFreeHrs);
+  if(ahead.some(x=>x.pop>=S.popMax&&x.precip>=0.01)||h.precip>=0.01)return{k:'bad',t:'Rain'};
+  if(h.wind!=null&&h.wind<S.windMin)return(!h.day||hr<=8||hr>=18)?{k:'inv',t:'Inversion?'}:{k:'bad',t:'Calm'};
+  if(!h.day)return{k:'night',t:''};
+  if(h.wind!=null&&h.wind>S.windMax)return{k:'bad',t:'Windy'};
+  if(h.gust!=null&&h.gust>S.gustMax)return{k:'bad',t:'Gusty'};
+  if(h.temp>S.tempMax)return{k:'bad',t:'Hot'};
+  if(h.temp<S.tempMin)return{k:'bad',t:'Cold'};
+  return{k:'good',t:'Good'};
+}
+// "Fri 9 AM–3 PM" style list of 2+ hour stretches of good spray hours
+function wxSprayWindows(list){
+  const hrN=n=>{n%=24;return(n%12||12)+(n<12?' AM':' PM');}, H=s=>+s.slice(11,13);
+  const good=list.map((_,i)=>wxSprayHour(list,i).k==='good'), out=[];
+  let st=null;
+  list.forEach((h,i)=>{
+    if(!good[i])return;
+    if(st==null)st=i;
+    const last=i===list.length-1||!good[i+1]||list[i+1].t.slice(0,10)!==h.t.slice(0,10);
+    if(last){
+      if(i-st+1>=2)out.push(`${wxDow(h.t.slice(0,10))} ${hrN(H(list[st].t))}–${hrN(H(h.t)+1)}`);
+      st=null;
+    }
+  });
+  return out;
+}
+
 /* ── 72-hour hourly look-ahead (website only) ── */
 // Same weighted model blend as the daily sheet, hour by hour. Models are matched on timestamp.
 function wxBuildHours(res){
@@ -10138,15 +10309,16 @@ function wxHourlyHtml(){
   const now=wxNowHour(), all=WX.hrData.filter(h=>h.t>=now).slice(0,WX.hours), step=WX.hrStep;
   if(!all.length)return'';
   // 3-hour view: each row covers that hour + the next two (precip summed, chance = highest)
-  const rows=[];
+  const rows=[], spr=all.map((_,i)=>wxSprayHour(all,i));
   for(let i=0;i<all.length;i+=step){
-    const g=all.slice(i,i+step), h={...g[0]};
+    const g=all.slice(i,i+step), h={...g[0]}, gs=spr.slice(i,i+step);
+    h.spray=gs.every(x=>x.k==='good')?gs[0]:(gs.find(x=>x.k!=='good')||gs[0]);
     h.precip=g.reduce((s,x)=>s+x.precip,0); h.snow=g.reduce((s,x)=>s+x.snow,0);
     h.pop=Math.max(...g.map(x=>x.pop)); h.thunder=g.some(x=>x.thunder);
     h.gust=Math.max(...g.map(x=>x.gust==null?-1:x.gust)); if(h.gust<0)h.gust=null;
     rows.push(h);
   }
-  const t=WX.thresholds, cols=13;
+  const t=WX.thresholds, cols=14;
   const hr=s=>{const n=+s.slice(11,13);return(n%12||12)+(n<12?' AM':' PM');};
   const dayName=s=>new Date(wxDayNum(s.slice(0,10))*864e5).toLocaleDateString('en-US',{timeZone:'UTC',weekday:'long',month:'short',day:'numeric'});
   let last='', body='';
@@ -10159,18 +10331,23 @@ function wxHourlyHtml(){
       <td>${hr(h.t)}</td><td class="sky">${wxHrSky(h)}</td>
       <td class="${cold?'cold':''}"><b>${h.temp}</b></td><td>${h.feels??'-'}</td><td>${h.dew??'-'}</td><td>${h.rh??'-'}</td>
       <td class="${windy?'windy':''}">${h.wind??'-'}</td><td>${h.gust??'-'}</td><td>${h.dir}</td>
+      <td class="spray ${h.spray.k}">${h.spray.t}</td>
       <td class="${wet?'wet':''}">${h.pop>=5||h.precip>=0.005?h.pop:'-'}</td>
       <td class="${wet?'wet':''}">${h.precip>=0.005?h.precip.toFixed(2):'-'}</td>
       <td>${h.snow>=0.05?h.snow.toFixed(1):'-'}</td><td>${h.cloud??'-'}</td></tr>`;
   });
+  const win=wxSprayWindows(all), S=WX.spray;
   const btn=(n,l)=>`<button class="btn btn-s ${WX.hrStep===n?'btn-p':'btn-o'}" onclick="wxSetHrStep(${n})">${l}</button>`;
   return `<div class="card wx-hr wx-noprint">
     <div class="ch"><div class="ct">Next 72 hours — hour by hour</div><div style="display:flex;gap:6px">${btn(1,'Every hour')}${btn(3,'Every 3 hours')}</div></div>
+    <div class="wx-spraywin"><b>Spray windows:</b> ${win.length?win.join(' &nbsp;·&nbsp; '):'none in the next 72 hours'}</div>
     <div class="table-scroll"><table><thead><tr><th>Time</th><th>Sky</th><th>Temp<br>°F</th><th>Feels<br>°F</th><th>Dew pt<br>°F</th><th>Humid<br>%</th>
-      <th>Wind<br>mph</th><th>Gust<br>mph</th><th>Dir</th><th>Precip<br>%</th><th>Precip<br>in.${step>1?' (3 hr)':''}</th><th>Snow<br>in.</th><th>Cloud<br>%</th></tr></thead>
+      <th>Wind<br>mph</th><th>Gust<br>mph</th><th>Dir</th><th>Spray</th><th>Precip<br>%</th><th>Precip<br>in.${step>1?' (3 hr)':''}</th><th>Snow<br>in.</th><th>Cloud<br>%</th></tr></thead>
     <tbody>${body}</tbody></table></div>
     <p class="wx-hr-note">Same model blend as the 15-day sheet. Shaded: <span class="cold">temp ≤ ${t.freezeLowF}°F</span>
-      <span class="windy">wind ≥ ${t.windMph} mph</span> <span class="wet">precip chance ≥ ${WX.highlightPop}%</span> · grey rows are night.</p>
+      <span class="windy">wind ≥ ${t.windMph} mph</span> <span class="wet">precip chance ≥ ${WX.highlightPop}%</span> · grey rows are night.<br>
+      <span class="spray good">Good</span> spray hour = daytime, wind ${S.windMin}–${S.windMax} mph, gusts ≤ ${S.gustMax} mph, ${S.tempMin}–${S.tempMax}°F, and no rain expected in the next ${S.rainFreeHrs} hours.
+      <span class="spray inv">Inversion?</span> = near-calm air at night or early/late in the day, when spray drift can travel. Always follow your product label.</p>
   </div>`;
 }
 function wxAccHtml(){
