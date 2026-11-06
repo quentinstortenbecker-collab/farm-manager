@@ -1311,6 +1311,7 @@ const DEFAULTS = {
   inputPlans:[],
   chemRebates:[],
   chemPrograms:[],
+  chemScenarios:[],
   chemLabels:{},
   inventory:[],
   profitWatch:{corn:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyComm:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyNgmo:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyRenwick:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''}},
@@ -1413,7 +1414,7 @@ let _appLoaded=false;     // true after first cloud load — prevents token-refr
    edits write straight through into S.years. Shared-across-years data (appPlans —
    already keyed field_year, contracts — already carry .year, loans, equipment,
    glCodes, appCategories) stays at the top level. */
-const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm','chemRebates','chemPrograms'];
+const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm','chemRebates','chemPrograms','chemScenarios'];
 let _preMigrationBackupDone=false;
 
 // Fresh, self-contained per-year skeleton. Pure — does not read S.
@@ -1422,7 +1423,7 @@ function blankYearRaw(yr,farmName){
   s.year=String(yr); s._setupComplete=true;
   if(farmName) s.farmName=farmName;
   return {
-    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[], chemRebates:[], chemPrograms:[],
+    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[], chemRebates:[], chemPrograms:[], chemScenarios:[],
     cropTracker:{plantDates:{},weatherLog:[],sprayLog:{}},
     profitWatch:JSON.parse(JSON.stringify(DEFAULTS.profitWatch)),
     mtm:JSON.parse(JSON.stringify(DEFAULTS.mtm))
@@ -1515,6 +1516,7 @@ function mergeDefaults(loaded,skipBackup){
     if(!y.inventory) y.inventory=[];
     if(!y.chemRebates) y.chemRebates=[];
     if(!y.chemPrograms) y.chemPrograms=[];
+    if(!y.chemScenarios) y.chemScenarios=[];
     if(!y.cropTracker) y.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
     if(!y.cropTracker.plantDates) y.cropTracker.plantDates={};
     if(!y.cropTracker.weatherLog) y.cropTracker.weatherLog=[];
@@ -6223,11 +6225,12 @@ function renderInputsPage(){
   if(!tbr||!cont)return;
   if(!window._inputsTab) window._inputsTab='registry';
   const cur=window._inputsTab;
-  const tabs=[['registry','Registry'],['programs','Programs'],['summary','Purchase Summary'],['inventory','Inventory']];
+  const tabs=[['registry','Registry'],['programs','Programs'],['scenarios','Compare scenarios'],['summary','Purchase Summary'],['inventory','Inventory']];
   if((S.inputPlans||[]).length||cur==='plans') tabs.push(['plans','Old plan builder']);
   tbr.innerHTML=tabs.map(([k,l])=>`<button class="btn ${cur===k?'btn-p':'btn-o'}" onclick="window._inputsTab='${k}';renderInputsPage()">${l}</button>`).join('');
   if(cur==='registry') renderInputsRegistry(cont);
   else if(cur==='programs') renderInputsPrograms(cont);
+  else if(cur==='scenarios') renderInputsScenarios(cont);
   else if(cur==='plans') renderInputsPlans(cont);
   else if(cur==='summary') renderInputsSummary(cont);
   else if(cur==='inventory') renderInputsInventory(cont);
@@ -7122,7 +7125,7 @@ const CHEM_ENTS=[
 const CHEM_SPRAY_PASSES=['Pre-Emerge Spray Pass','Pre-Emerge Spray Pass 2','Post-Emerge Spray Pass','Post-Emerge Spray Pass 2','Fungicide Pass','Planting Pass','32 Spray Pass'];
 const CHEM_RU_BASE={liquid:{'fl oz':1/128,pt:1/8,qt:1/4,gal:1},dry:{oz:1/16,lb:1}};
 const CHEM_POUR_STEP={'fl oz':.25,oz:.25,pt:.05,qt:.05,gal:.01,lb:.01};
-const cpMoney=(n,d=2)=>'$'+(+n||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const cpMoney=(n,d=2)=>{const v=+n||0,s=Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});return (v<0&&+s.replace(/,/g,'')>0?'−$':'$')+s;};
 const cpAc=n=>(+n||0).toLocaleString('en-US',{maximumFractionDigits:1});
 const cpNum=n=>{const v=Math.round((+n||0)*100)/100;return String(v);};
 function cpEnt(k){return CHEM_ENTS.find(e=>e.k===k)||CHEM_ENTS[0];}
@@ -7596,6 +7599,206 @@ function cpCheckApply(){
   cpMsg(`Replaced ${chemEsc(old)} with ${repl.map(x=>chemEsc(x.product)).join(' + ')} in ${chemEsc(ps.name)}. Copy the program first if you want to keep both versions.`);
   closeModal(); cpSave();
 }
+
+/* ════════════════════════════════════════════════════
+   CHEM SCENARIOS — sets of programs compared side by side against the current field plans.
+   scenario = {id,name,programIds:[]}  (per crop year: S.chemScenarios)
+   • A field in a scenario's program(s) gets those programs' chem cost in place of its current
+     chem lines; a field in no program keeps its current plan. Fields in 2+ programs get both.
+   • Per-acre and flat rebates are counted here (% and per-unit are already in the net price).
+   • Profit uses the Reports full-cost stack (inputs + rent + overhead + machinery).
+════════════════════════════════════════════════════ */
+const CS_CHEM_CATS=[...CHEM_TYPES,'WATER CONDITIONER'];
+const csStrip2nd=n=>String(n||'').replace(/\s*\((2nd|second)\)\s*$/i,'').trim();
+function csFieldEnt(f){const e=CHEM_ENTS.find(x=>x.crops.includes(f.crop));return e?e.k:'';}
+// One field's chem under a scenario (sc=null → its current application plan).
+function csFieldChem(f,sc){
+  const acres=+f.acres||0, plan=getFieldPlan(f.id), hasPlan=plan.length>0;
+  const chemRows=plan.filter(r=>CS_CHEM_CATS.includes(r.category));
+  const curCpa=acres?chemRows.reduce((s,r)=>s+calcRowTotal(r,f.acres),0)/acres:0;
+  const progs=sc?(S.chemPrograms||[]).filter(p=>(sc.programIds||[]).includes(p.id)&&cpProgFields(p).some(x=>String(x.id)===String(f.id))):[];
+  const items=[];
+  if(progs.length){
+    progs.forEach(p=>cpFieldLines(p,f.id).forEach(l=>{
+      if(!String(l.product||'').trim())return;
+      const pr=cpPriceLine(l);
+      items.push({product:l.product,vendor:pr.q?pr.q.vendor:'',pass:l.pass,cpa:pr.cpa,groups:pr.ai.map(a=>a.group).filter(Boolean),noQuote:!pr.q,
+        rate:`${cpNum(l.rate)} ${pr.ru}`,ac:acres,prog:p.name});
+    }));
+  } else chemRows.forEach(r=>{
+    const name=csStrip2nd(r.product), lbl=chemLabel(name);
+    // same unit reading as "Start from a field" so identical lines compare as identical
+    const ru=({128:'fl oz',16:'oz',8:'pt',4:'qt'})[+r.purchUnit]||(cpForm(name)==='dry'?'lb':'gal');
+    items.push({product:name,vendor:r.vendor,pass:r.pass||'',cpa:acres?calcRowTotal(r,f.acres)/acres:0,
+      rate:`${cpNum(r.rate)} ${ru}`,ac:+r.appliedAcres||acres,
+      groups:lbl?(lbl.actives||[]).map(a=>a.group||chemGroup(a.name)).filter(Boolean):[]});
+  });
+  return {f,acres,progs,items,hasPlan,curCpa,cpa:items.reduce((s,i)=>s+i.cpa,0),
+    passes:new Set(items.map(i=>i.pass||'(no pass)')).size,groups:new Set(items.flatMap(i=>i.groups))};
+}
+// Per-acre rebates: every acre of a field that uses a covered product. Flat rebates: spread by acres over those fields.
+function csRebates(rows){
+  const byField=new Map(), list=[];
+  (S.chemRebates||[]).filter(r=>r.counted&&(r.kind==='perAcre'||r.kind==='flat')).forEach(r=>{
+    const hit=rows.filter(x=>x.items.some(i=>chemRebateHits(r,{name:i.product,vendor:i.vendor})));
+    if(!hit.length)return;
+    const ac=hit.reduce((s,x)=>s+x.acres,0), total=r.kind==='perAcre'?(+r.amount||0)*ac:(+r.amount||0);
+    hit.forEach(x=>byField.set(String(x.f.id),(byField.get(String(x.f.id))||0)+(ac?total*x.acres/ac:0)));
+    list.push({r,ac,total});
+  });
+  return {byField,list};
+}
+function csCalc(sc){
+  const rows=(S.fields||[]).map(f=>csFieldChem(f,sc)), reb=csRebates(rows);
+  const ents={}; CHEM_ENTS.forEach(e=>ents[e.k]={ac:0,chem:0,passAc:0,groups:new Set(),cost:0,bu:0});
+  let chem=0,rebT=0,net=0;
+  const notes={uncovered:[],overlap:[],budget:[],noQuote:0};
+  rows.forEach(x=>{
+    const rb=byFieldGet(reb.byField,x.f.id), k=csFieldEnt(x.f);
+    chem+=x.cpa*x.acres; rebT+=rb;
+    // full cost with this scenario's chem in place of the plan's chem (a field on a crop budget keeps its budget)
+    const full=getFullCostPerAcre(x.f)*x.acres+(x.hasPlan?(x.cpa-x.curCpa)*x.acres:0)-rb;
+    net+=getFieldRevPA(x.f)*x.acres-full;
+    if(k){const E=ents[k];E.ac+=x.acres;E.chem+=x.cpa*x.acres-rb;E.passAc+=x.passes*x.acres;
+      x.groups.forEach(g=>{if(String(g)[0]==='H')E.groups.add(g);});E.cost+=full;E.bu+=x.acres*(fYield(x.f)||0);}
+    if(sc){
+      if(k&&!x.progs.length)notes.uncovered.push(x.f.name);
+      if(x.progs.length>1)notes.overlap.push(`${x.f.name} (${x.progs.map(p=>p.name).join(' + ')})`);
+      if(x.progs.length&&!x.hasPlan)notes.budget.push(x.f.name);
+      notes.noQuote+=x.items.filter(i=>i.noQuote).length?1:0;
+    }
+  });
+  return {chem,rebT,net,ents,reb,notes,prods:csProducts(rows)};
+}
+function byFieldGet(m,id){return m.get(String(id))||0;}
+// Product use by enterprise: {ent:{productKey:{name,ac,cost,apps,rates:Set,passes:Set,fields}}}
+function csProducts(rows){
+  const out={}; CHEM_ENTS.forEach(e=>out[e.k]={});
+  rows.forEach(x=>{const k=csFieldEnt(x.f); if(!k)return;
+    const perField={};
+    x.items.forEach(i=>{const key=chemNorm(i.product);
+      const P=out[k][key]||(out[k][key]={name:i.product,ac:0,cost:0,apps:0,rates:new Set(),passes:new Set(),fields:new Set()});
+      P.cost+=i.cpa*x.acres; P.rates.add(i.rate); if(i.pass)P.passes.add(i.pass);
+      if(!P.fields.has(String(x.f.id))){P.fields.add(String(x.f.id));P.ac+=i.ac;}
+      perField[key]=(perField[key]||0)+1; P.apps=Math.max(P.apps,perField[key]);});
+  });
+  return out;
+}
+// Same product use: same rates and number of applications, on about the same acres (plans often carry rounded acres)
+function csSameUse(P,B){
+  if(!P||!B)return !P&&!B;
+  const r=p=>[...p.rates].sort().join('|');
+  return r(P)===r(B)&&P.apps===B.apps&&Math.abs(P.ac-B.ac)<=Math.max(1,B.ac*.01);
+}
+// Shorter pass names for the product rows
+const csPassShort=p=>String(p||'').replace(/ Spray Pass/,'').replace(/ Pass/,'');
+function csProdCell(P,B,entAc,isBase){
+  if(!P)return B?`<span style="color:#b45309;font-size:11px">not used</span>`:'<span style="color:var(--g400)">—</span>';
+  const rates=[...P.rates].join(' / ');
+  const changed=!isBase&&!csSameUse(P,B);
+  const tag=!isBase&&!B?'<span class="b bg" style="font-size:9px;padding:0 4px">new</span> ':'';
+  const per=P.ac?P.cost/P.ac:0;
+  return `<div style="${changed?'background:#fef3c7;border-radius:4px;padding:1px 4px;margin:-1px -4px':''}">${tag}<b>${chemEsc(rates)}</b>${P.apps>1?` <span style="font-size:10px">×${P.apps} apps</span>`:''}
+    <div style="font-size:10px;color:var(--g400)">${cpMoney(per)}/ac${P.ac<entAc-0.5?` · ${cpAc(P.ac)} of ${cpAc(entAc)} ac`:''}${P.passes.size?` · ${[...P.passes].map(csPassShort).join(', ')}`:''}</div></div>`;
+}
+
+function renderInputsScenarios(cont){
+  const scs=S.chemScenarios||(S.chemScenarios=[]);
+  const progs=S.chemPrograms||[];
+  // drop programs that were deleted
+  scs.forEach(sc=>{sc.programIds=(sc.programIds||[]).filter(id=>progs.some(p=>p.id===id));});
+  if(!progs.length){cont.innerHTML=`<div class="card"><div class="ct">Compare scenarios</div>
+    <div style="color:var(--g400);font-size:12px;margin-top:6px">Build at least one program on the <b>Programs</b> tab first. A scenario is a set of programs, for example Corn A + E3 B + Non-GMO A.</div>
+    <button class="btn btn-p" style="margin-top:10px" onclick="window._inputsTab='programs';renderInputsPage()">Go to Programs</button></div>`;return;}
+  const cols=[null,...scs], calc=cols.map(sc=>csCalc(sc)), base=calc[0];
+  const best=scs.length?Math.min(...calc.slice(1).map(c=>c.chem-c.rebT)):null;
+  const head=cols.map((sc,i)=>{
+    if(!sc)return `<th style="min-width:170px;vertical-align:top"><div style="font-size:13px">Current field plans</div>
+      <div style="font-size:10px;font-weight:400;color:var(--g400);text-transform:none;letter-spacing:0">What the Application Plan page has now</div></th>`;
+    const boxes=CHEM_ENTS.map(e=>{const ps=progs.filter(p=>p.ent===e.k);if(!ps.length)return'';
+      return `<div style="margin-top:4px"><div style="font-size:10px;color:var(--g400)">${e.name}</div>
+        ${ps.map(p=>`<label style="display:block;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer">
+          <input type="checkbox" ${(sc.programIds||[]).includes(p.id)?'checked':''} onchange="csToggle('${sc.id}','${p.id}',this.checked)"> ${chemEsc(p.name)}</label>`).join('')}</div>`;}).join('');
+    return `<th style="min-width:190px;vertical-align:top;${calc[i].chem-calc[i].rebT===best&&scs.length>1?'background:#f0fdf4':''}">
+      <input class="fi" value="${chemEsc(sc.name)}" style="width:150px;font-weight:600" onchange="csSet('${sc.id}','name',this.value)">
+      <div style="margin-top:2px"><button class="btn btn-o btn-s" onclick="csCopy('${sc.id}')">Copy</button> <button class="btn btn-r btn-s" onclick="csDelete('${sc.id}')">✕</button></div>
+      ${boxes}</th>`;}).join('');
+  const diff=(v,b,good)=>{const d=v-b;if(Math.abs(d)<.5)return'';const ok=good==='low'?d<0:d>0;
+    return `<div style="font-size:10px;color:${ok?'var(--gm)':'#b45309'}">${d>0?'+':'−'}${cpMoney(Math.abs(d),0)} vs current</div>`;};
+  const row=(label,fn,cls='')=>`<tr class="${cls}"><td style="white-space:nowrap">${label}</td>${calc.map((c,i)=>`<td class="tr">${fn(c,i)}</td>`).join('')}</tr>`;
+  const sec=t=>`<tr><td colspan="${cols.length+1}" style="background:var(--g50);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--g400)">${t}</td></tr>`;
+  const ents=CHEM_ENTS.filter(e=>base.ents[e.k].ac>0);
+  let body=sec('Chemical cost — whole operation')
+    +row('Chem $ (before per-acre / flat rebates)',c=>cpMoney(c.chem,0))
+    +row('Per-acre & flat rebates',c=>c.rebT?`−${cpMoney(c.rebT,0)}<div style="font-size:10px;color:var(--g400)">${c.reb.list.map(x=>chemEsc(x.r.name)).join(', ')}</div>`:'—')
+    +row('<b>Net chem $</b>',(c,i)=>`<b>${cpMoney(c.chem-c.rebT,0)}</b>${i?diff(c.chem-c.rebT,base.chem-base.rebT,'low'):''}`)
+    +sec('Net chem $ per acre');
+  ents.forEach(e=>{body+=row(`${e.name} <span style="color:var(--g400);font-size:10px">${cpAc(base.ents[e.k].ac)} ac</span>`,(c,i)=>{const E=c.ents[e.k];const v=E.ac?E.chem/E.ac:0;
+    const b=base.ents[e.k].ac?base.ents[e.k].chem/base.ents[e.k].ac:0;const d=v-b;
+    return `${cpMoney(v)}${i&&Math.abs(d)>=.05?`<div style="font-size:10px;color:${d<0?'var(--gm)':'#b45309'}">${d>0?'+':'−'}${cpMoney(Math.abs(d))}/ac</div>`:''}`;});});
+  body+=sec('Spray passes & herbicide sites of action');
+  ents.forEach(e=>{body+=row(e.name,c=>{const E=c.ents[e.k];const p=E.ac?E.passAc/E.ac:0;
+    return `${(Math.round(p*10)/10)} pass${p===1?'':'es'}<div style="font-size:10px">${[...E.groups].sort().map(cpGroupBadge).join(' ')||'<span style="color:var(--g400)">no label info</span>'}</div>`;});});
+  // Product-by-product, per enterprise
+  const show=window._csShowProd||(window._csShowProd={});
+  const pOrder=n=>{let best=99;(calc.map(c=>c.prods)).forEach(pr=>Object.values(pr).forEach(m=>{const P=m[n];if(P)P.passes.forEach(ps=>{const i=APP_PASSES.indexOf(ps);if(i>=0&&i<best)best=i;});}));return best;};
+  ents.forEach(e=>{
+    const keys=[...new Set(calc.flatMap(c=>Object.keys(c.prods[e.k])))];
+    const name=k=>(calc.find(c=>c.prods[e.k][k])||{prods:{[e.k]:{[k]:{name:k}}}}).prods[e.k][k].name;
+    keys.sort((a,b)=>pOrder(a)-pOrder(b)||name(a).localeCompare(name(b)));
+    const nDiff=keys.filter(k=>calc.slice(1).some(c=>{const P=c.prods[e.k][k],B=base.prods[e.k][k];
+      return !csSameUse(P,B);})).length;
+    const open=show[e.k]!==false;
+    body+=`<tr><td colspan="${cols.length+1}" style="background:var(--g50);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--g400)">
+      Products — ${e.name} <span style="text-transform:none;font-weight:400">(${keys.length} products${scs.length?`, ${nDiff} different from current`:''})</span>
+      <span class="ie" style="text-transform:none;margin-left:8px" onclick="window._csShowProd['${e.k}']=${open?'false':'true'};renderInputsPage()">${open?'hide':'show'}</span></td></tr>`;
+    if(open)keys.forEach(k=>{
+      const B=base.prods[e.k][k], entAc=base.ents[e.k].ac;
+      if(window._csOnlyDiff&&scs.length&&calc.slice(1).every(c=>csSameUse(c.prods[e.k][k],B)))return;
+      body+=`<tr><td style="font-size:12px">${chemEsc(name(k))}</td>${calc.map((c,i)=>`<td class="tr" style="font-size:12px;vertical-align:top">${csProdCell(c.prods[e.k][k],i?B:null,entAc,i===0)}</td>`).join('')}</tr>`;
+    });
+  });
+  body+=sec('Whole-farm profit (full cost: inputs, rent, overhead, machinery)')
+    +row('<b>Net return</b>',(c,i)=>`<b style="color:${c.net>=0?'var(--gm)':'#b91c1c'}">${cpMoney(c.net,0)}</b>${i?diff(c.net,base.net,'high'):''}`);
+  ents.forEach(e=>{body+=row(`Breakeven — ${e.name}`,c=>{const E=c.ents[e.k];return E.bu?`${cpMoney(E.cost/E.bu)}/bu`:'—';});});
+  // notes per scenario
+  const noteCell=c=>{const n=c.notes,out=[];
+    if(n.uncovered.length)out.push(`<span title="${chemEsc(n.uncovered.join(', '))}">${n.uncovered.length} field${n.uncovered.length===1?'':'s'} keep their current plan</span>`);
+    if(n.overlap.length)out.push(`<span style="color:#b45309" title="Both programs' costs are counted">In 2 programs: ${chemEsc(n.overlap.join('; '))}</span>`);
+    if(n.budget.length)out.push(`<span style="color:#b45309">${chemEsc(n.budget.join(', '))}: no field plan, profit uses the crop budget</span>`);
+    if(n.noQuote)out.push(`<span style="color:#b45309">${n.noQuote} field${n.noQuote===1?' has':'s have'} products with no quote ($0)</span>`);
+    return out.join('<br>')||'<span style="color:var(--g400)">—</span>';};
+  body+=sec('Check')+`<tr><td>Notes</td>${calc.map((c,i)=>`<td style="font-size:11px;vertical-align:top">${i?noteCell(c):'<span style="color:var(--g400)">Uses your field plans as they are</span>'}</td>`).join('')}</tr>`;
+  cont.innerHTML=`
+    <div class="alert alert-info" style="margin-bottom:12px;font-size:12px">
+      A scenario is a set of programs. Check the programs to include. Each field in a checked program gets that program's chem cost <b>in place of</b> its current chem lines; fields in no program keep their current plan.
+      Yields don't change between scenarios. Nothing here changes your field plans.
+    </div>
+    <div class="card">
+      <div class="ch"><div><div class="ct">Compare scenarios — ${chemEsc(S.settings?.year||'')}</div><div class="cs">Lowest net chem $ is shaded green</div></div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;cursor:pointer"><input type="checkbox" ${window._csOnlyDiff?'checked':''} onchange="window._csOnlyDiff=this.checked;renderInputsPage()"> Only show products that differ</label>
+          <button class="btn btn-p" onclick="csNew()">+ New scenario</button></div></div>
+      <div class="table-scroll"><table>
+        <thead><tr><th style="min-width:170px"></th>${head}</tr></thead>
+        <tbody>${body}</tbody></table></div>
+      ${scs.length?'':`<div style="color:var(--g400);font-size:12px;margin-top:8px">Click <b>+ New scenario</b>. It starts with the first program of each enterprise checked.</div>`}
+    </div>`;
+}
+function csSave(){save();renderInputsPage();}
+function csFind(id){return (S.chemScenarios||[]).find(s=>s.id===id);}
+function csNew(){
+  if(!S.chemScenarios)S.chemScenarios=[];
+  const ids=CHEM_ENTS.map(e=>(S.chemPrograms||[]).find(p=>p.ent===e.k)).filter(Boolean).map(p=>p.id);
+  S.chemScenarios.push({id:cpNewId('sc'),name:`Scenario ${S.chemScenarios.length+1}`,programIds:ids});csSave();
+}
+function csCopy(id){const o=csFind(id);if(!o)return;
+  S.chemScenarios.splice(S.chemScenarios.indexOf(o)+1,0,{id:cpNewId('sc'),name:o.name+' (copy)',programIds:[...(o.programIds||[])]});csSave();}
+function csDelete(id){const o=csFind(id);if(!o||!confirm(`Delete "${o.name}"? Its programs stay.`))return;
+  S.chemScenarios=S.chemScenarios.filter(s=>s.id!==id);csSave();}
+function csSet(id,k,v){const o=csFind(id);if(!o)return;o[k]=v;csSave();}
+function csToggle(id,pid,on){const o=csFind(id);if(!o)return;
+  o.programIds=(o.programIds||[]).filter(x=>x!==pid);if(on)o.programIds.push(pid);csSave();}
 
 /* ────────────────────────────────────────────────────
    PURCHASE SUMMARY
