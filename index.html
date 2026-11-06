@@ -1309,6 +1309,8 @@ const DEFAULTS = {
   mtm:{cornPrice:4.45,cornBasis:0,cornPremium:0,soyCommPrice:10.50,soyCommBasis:0,soyNgmoPrice:10.50,soyNgmoBasis:0,soyRenwickPrice:10.50,soyRenwickBasis:0,lastFetched:null},
   products:[],
   inputPlans:[],
+  chemRebates:[],
+  chemLabels:{},
   inventory:[],
   profitWatch:{corn:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyComm:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyNgmo:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyRenwick:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''}},
 };
@@ -1410,7 +1412,7 @@ let _appLoaded=false;     // true after first cloud load — prevents token-refr
    edits write straight through into S.years. Shared-across-years data (appPlans —
    already keyed field_year, contracts — already carry .year, loans, equipment,
    glCodes, appCategories) stays at the top level. */
-const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm'];
+const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm','chemRebates'];
 let _preMigrationBackupDone=false;
 
 // Fresh, self-contained per-year skeleton. Pure — does not read S.
@@ -1419,7 +1421,7 @@ function blankYearRaw(yr,farmName){
   s.year=String(yr); s._setupComplete=true;
   if(farmName) s.farmName=farmName;
   return {
-    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[],
+    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[], chemRebates:[],
     cropTracker:{plantDates:{},weatherLog:[],sprayLog:{}},
     profitWatch:JSON.parse(JSON.stringify(DEFAULTS.profitWatch)),
     mtm:JSON.parse(JSON.stringify(DEFAULTS.mtm))
@@ -1492,6 +1494,8 @@ function mergeDefaults(loaded,skipBackup){
   if(!loaded.appCategories||loaded.appCategories.length===0) loaded.appCategories=JSON.parse(JSON.stringify(DEFAULTS.appCategories));
   if(!loaded.contracts) loaded.contracts=JSON.parse(JSON.stringify(DEFAULTS.contracts));
   if(!loaded.equipment) loaded.equipment=[];
+  if(!loaded.chemLabels||typeof loaded.chemLabels!=='object') loaded.chemLabels={};  // product label data (actives, strength) — shared across years
+  if(Array.isArray(loaded.appCategories)&&!loaded.appCategories.includes('ADJUVANT')) loaded.appCategories.push('ADJUVANT');
   if(!loaded.loans) loaded.loans=JSON.parse(JSON.stringify(DEFAULTS.loans));
   if(!loaded.years||typeof loaded.years!=='object') loaded.years={};
   if(!loaded.activeYear) loaded.activeYear=String(Object.keys(loaded.years)[0]||DEFAULTS.settings.year||'2026');
@@ -1508,6 +1512,7 @@ function mergeDefaults(loaded,skipBackup){
     if(!y.products) y.products=[];
     if(!y.inputPlans) y.inputPlans=[];
     if(!y.inventory) y.inventory=[];
+    if(!y.chemRebates) y.chemRebates=[];
     if(!y.cropTracker) y.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
     if(!y.cropTracker.plantDates) y.cropTracker.plantDates={};
     if(!y.cropTracker.weatherLog) y.cropTracker.weatherLog=[];
@@ -6231,135 +6236,432 @@ if(!window._regSort) window._regSort={col:'name',dir:1};
 if(!window._regSearch) window._regSearch='';
 if(!window._regTypeFilter) window._regTypeFilter='ALL';
 
+/* ════════════════════════════════════════════════════
+   CHEM LIBRARY — label strength, quotes, net price, $ per lb of active
+   • S.chemLabels  (shared across years) — keyed by product name: form + actives & strength
+   • S.products    (per year)  — vendor quotes: list price, container, quote date, prepay/early-pay %
+   • S.chemRebates (per year)  — rebate & pricing programs from companies
+════════════════════════════════════════════════════ */
+const CHEM_TYPES=['CHEM HERB','CHEM FUNG','CHEM INSECT','GLYPHOSATE','ADJUVANT'];
+const REG_TYPES=['CHEM HERB','CHEM FUNG','CHEM INSECT','GLYPHOSATE','ADJUVANT','N FERTILIZER','FERTILIZER NON-N','N STAB','SEED','OTHER'];
+// Site-of-action groups: H = herbicide (WSSA), F = fungicide (FRAC), I = insecticide (IRAC)
+const ACTIVE_GROUPS={
+  'atrazine':'H5','metribuzin':'H5','simazine':'H5','bentazon':'H6','linuron':'H7',
+  'mesotrione':'H27','tembotrione':'H27','topramezone':'H27','isoxaflutole':'H27','bicyclopyrone':'H27','tolpyralate':'H27',
+  's-metolachlor':'H15','metolachlor':'H15','acetochlor':'H15','dimethenamid-p':'H15','pyroxasulfone':'H15',
+  'sulfentrazone':'H14','flumioxazin':'H14','fomesafen':'H14','lactofen':'H14','saflufenacil':'H14','carfentrazone':'H14','fluthiacet-methyl':'H14','acifluorfen':'H14',
+  'glyphosate':'H9','glufosinate':'H10','2,4-d':'H4','dicamba':'H4','clopyralid':'H4','fluroxypyr':'H4','diflufenzopyr':'H19',
+  'chlorimuron':'H2','cloransulam':'H2','flumetsulam':'H2','imazethapyr':'H2','thifensulfuron':'H2','tribenuron':'H2','nicosulfuron':'H2','rimsulfuron':'H2','halosulfuron':'H2',
+  'clethodim':'H1','quizalofop':'H1','sethoxydim':'H1','fluazifop':'H1','pendimethalin':'H3','trifluralin':'H3','paraquat':'H22',
+  'azoxystrobin':'F11','pyraclostrobin':'F11','trifloxystrobin':'F11','picoxystrobin':'F11','fluoxastrobin':'F11',
+  'propiconazole':'F3','tebuconazole':'F3','prothioconazole':'F3','mefentrifluconazole':'F3','cyproconazole':'F3','flutriafol':'F3','tetraconazole':'F3','difenoconazole':'F3','metconazole':'F3',
+  'fluxapyroxad':'F7','benzovindiflupyr':'F7','bixafen':'F7','pydiflumetofen':'F7','boscalid':'F7','fluopyram':'F7','inpyrfluxam':'F7',
+  'lambda-cyhalothrin':'I3A','gamma-cyhalothrin':'I3A','bifenthrin':'I3A','zeta-cypermethrin':'I3A','esfenvalerate':'I3A','deltamethrin':'I3A','permethrin':'I3A',
+  'chlorpyrifos':'I1B','acephate':'I1B','chlorantraniliprole':'I28','imidacloprid':'I4A','thiamethoxam':'I4A','clothianidin':'I4A','sulfoxaflor':'I4C','flupyradifurone':'I4D',
+};
+// Label strengths checked against EPA / specimen labels (Nov 2026). Offered as a one-click fill when the name matches.
+const KNOWN_LABELS=[
+  {match:/authority\s*mtz/i, src:'Authority MTZ DF (EPA 279-3340)', form:'dry', actives:[['sulfentrazone',18],['metribuzin',27]]},
+  {match:/sulfen.?met/i,     src:'Willowood Sulfen-Met DF',        form:'dry', actives:[['sulfentrazone',18],['metribuzin',27]]},
+  {match:/veltyma/i,         src:'Veltyma (EPA 7969-409)',         form:'liquid', actives:[['pyraclostrobin',1.67],['mefentrifluconazole',1.67]]},
+  {match:/dual\s*ii/i,       src:'Dual II Magnum (EPA 100-818)',   form:'liquid', actives:[['s-metolachlor',7.64]]},
+  {match:/atrazine\s*4l/i,   src:'Atrazine 4L',                    form:'liquid', actives:[['atrazine',4]]},
+  {match:/mesotrione/i,      src:'Mesotrione 4SC (4 lb/gal)',      form:'liquid', actives:[['mesotrione',4]]},
+  {match:/stinger/i,         src:'Stinger (3 lb ae/gal)',          form:'liquid', actives:[['clopyralid',3]]},
+];
+const chemNorm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+const chemEsc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const isChemType=t=>CHEM_TYPES.includes(t);
+function chemLabel(name){return (S.chemLabels||{})[chemNorm(name)]||null;}
+function chemGroup(active){return ACTIVE_GROUPS[chemNorm(active)]||'';}
+
+// How much product one priced unit is: gallons (liquid) or pounds (dry).
+function chemUnitAmount(unit,form){
+  const u=String(unit||'').toUpperCase();
+  const liq={GAL:1,QT:.25,PT:.125,'FL OZ':1/128}, dry={LB:1,TON:2000};
+  if(form==='liquid'){ if(liq[u]!=null)return liq[u]; if(u==='OZ')return 1/128; }
+  if(form==='dry'){ if(dry[u]!=null)return dry[u]; if(u==='OZ')return 1/16; }
+  return null;
+}
+// lb of each active in ONE priced unit of the product, or null if it can't be worked out.
+function chemAiPerUnit(lbl,unit){
+  if(!lbl||!(lbl.actives||[]).length)return null;
+  const amt=chemUnitAmount(unit,lbl.form); if(amt==null)return null;
+  const out=lbl.actives.map(a=>{
+    let perBase;                                     // lb ai per gallon (liquid) or per lb (dry)
+    if(lbl.form==='dry') perBase=(+a.amt||0)/100;
+    else if(lbl.strength==='pct') perBase=(+a.amt||0)/100*(+lbl.density||0);
+    else perBase=+a.amt||0;
+    return {name:a.name,group:a.group||chemGroup(a.name),lb:perBase*amt};
+  });
+  return out.some(a=>a.lb>0)?out:null;
+}
+function chemRebateHits(r,p){
+  if(r.vendor&&chemNorm(r.vendor)!==chemNorm(p.vendor))return false;
+  const list=String(r.products||'').split(',').map(chemNorm).filter(Boolean);
+  return list.length?list.includes(chemNorm(p.name)):!!r.vendor;   // blank product list = everything from that vendor
+}
+// Price after prepay / early-pay discounts and per-unit or % rebates. Per-acre & flat rebates are counted in scenario totals.
+function chemNet(p){
+  const list=+p.price||0, notes=[]; let x=list;
+  const disc=(+p.prepayPct||0)+(+p.earlyPayPct||0);
+  if(disc){x-=list*disc/100;notes.push(`${disc}% prepay/early-pay`);}
+  (S.chemRebates||[]).forEach(r=>{
+    if(!r.counted||!chemRebateHits(r,p))return;
+    if(r.kind==='pct'){x-=list*(+r.amount||0)/100;notes.push(`${r.amount}% ${r.name}`);}
+    if(r.kind==='perUnit'){x-=+r.amount||0;notes.push(`$${(+r.amount||0).toFixed(2)}/${(p.unit||'unit').toLowerCase()} ${r.name}`);}
+  });
+  return {net:Math.max(0,x),notes};
+}
+// Rate-unit choices for the priced unit; the number is how many rate units are in one priced unit (= purchUnit).
+function chemRateUnits(unit){
+  const u=String(unit||'').toUpperCase();
+  if(u==='GAL')return[['fl oz',128],['pt',8],['qt',4],['gal',1]];
+  if(u==='QT')return[['fl oz',32],['pt',2],['qt',1]];
+  if(u==='LB')return[['oz',16],['lb',1]];
+  return null;
+}
+function chemRateUnitName(p){const o=(chemRateUnits(p.unit)||[]).find(x=>x[1]===(+p.purchUnit||0));return o?o[0]:'';}
+
+// Push selected vendors' NET prices out to this year's planned (not applied) application lines.
+// Only the products passed in (or whose name is in the list) are touched, so a hand-edited line
+// for some other product is never overwritten as a side effect.
+function chemResync(which){
+  const want=new Set((which||[]).map(x=>chemNorm(typeof x==='string'?x:x.name)));
+  let lines=0; const fields=new Set();
+  (S.products||[]).filter(p=>p.selected&&want.has(chemNorm(p.name))).forEach(p=>{
+    const r=syncSelectedPriceToPlans(p);lines+=r.count;r.fieldIds.forEach(id=>fields.add(id));});
+  return {lines,fields:fields.size};
+}
+// Products a rebate touches (for re-pricing after it's added, changed, switched off or removed)
+function chemRebateTargets(r){return r?(S.products||[]).filter(p=>chemRebateHits(r,p)):[];}
+function regMsg(t){window._regMsg=t;}
+
 function renderInputsRegistry(cont){
   if(!S.products) S.products=[];
+  if(!S.chemRebates) S.chemRebates=[];
   const yr=S.settings?.year||'2026';
-  const typeColors={'CHEM HERB':'bb','CHEM FUNG':'bg','CHEM INSECT':'ba',
-    'GLYPHOSATE':'bp','N FERTILIZER':'bx','FERTILIZER NON-N':'bx',
-    'N STAB':'bx','SEED':'bg','OTHER':'bx'};
-  const cats=['ALL','CHEM HERB','CHEM FUNG','CHEM INSECT','GLYPHOSATE',
-    'N FERTILIZER','FERTILIZER NON-N','N STAB','SEED','OTHER'];
-
-  // Filter
+  const typeColors={'CHEM HERB':'bb','CHEM FUNG':'bg','CHEM INSECT':'ba','GLYPHOSATE':'bp','ADJUVANT':'bx'};
+  const cats=['ALL','ALL CHEM',...REG_TYPES];
+  const q=(window._regSearch||'').toLowerCase(), tf=window._regTypeFilter||'ALL';
   let prods=S.products.filter(p=>{
-    const q=window._regSearch.toLowerCase();
-    const matchQ=!q||(p.name||'').toLowerCase().includes(q)||(p.vendor||'').toLowerCase().includes(q)||(p.ai||'').toLowerCase().includes(q);
-    const matchT=window._regTypeFilter==='ALL'||p.type===window._regTypeFilter;
+    const lbl=chemLabel(p.name), acts=lbl?(lbl.actives||[]).map(a=>a.name).join(' '):'';
+    const matchQ=!q||[p.name,p.vendor,p.ai,acts].some(s=>String(s||'').toLowerCase().includes(q));
+    const matchT=tf==='ALL'||(tf==='ALL CHEM'?isChemType(p.type):p.type===tf);
     return matchQ&&matchT;
   });
-
-  // Sort
   const {col,dir}=window._regSort;
   prods=[...prods].sort((a,b)=>{
-    let av=a[col]||'', bv=b[col]||'';
-    if(col==='price'){av=+av;bv=+bv;return dir*(av-bv);}
-    return dir*(av.toString().localeCompare(bv.toString()));
+    if(col==='price')return dir*((+a.price||0)-(+b.price||0));
+    if(col==='net')return dir*(chemNet(a).net-chemNet(b).net);
+    const c=dir*String(a[col]||'').localeCompare(String(b[col]||''));
+    return c||String(a.name).localeCompare(String(b.name))||chemNet(a).net-chemNet(b).net;
   });
-
-  const sortHdr=(label,key)=>{
-    const active=col===key;
-    const arrow=active?(dir===1?'▲':'▼'):'↕';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="regSort('${key}')">${label} <span style="font-size:9px;opacity:${active?1:0.4}">${arrow}</span></th>`;
-  };
-
-  // Group products by name for the "selected vendor" display
-  const byName={};
-  prods.forEach(p=>{
-    if(!byName[p.name]) byName[p.name]=[];
-    byName[p.name].push(p);
-  });
-
-  let rows='';
-  // Flatten sorted: if grouped by name show name only on first row
+  const sortHdr=(label,key,cls='')=>{const on=col===key;
+    return `<th class="${cls}" style="cursor:pointer;user-select:none;white-space:nowrap" onclick="regSort('${key}')">${label} <span style="font-size:9px;opacity:${on?1:.4}">${on?(dir===1?'▲':'▼'):'↕'}</span></th>`;};
   const seen=new Set();
+  let rows='';
   prods.forEach(p=>{
-    const isFirst=!seen.has(p.name);
-    seen.add(p.name);
-    const multi=byName[p.name]&&byName[p.name].length>1;
-    const rowSel=p.selected?'style="background:#f0fdf4"':'';
-    rows+=`<tr ${rowSel} id="reg-row-${p.id}">
-      <td style="min-width:160px">
-        <span class="ie" style="font-weight:${isFirst?600:400};padding-left:${isFirst?0:14}px"
-          onclick="regEditCell('${p.id}','name',this)">${isFirst?p.name:`↳ ${p.name}`}</span>
-      </td>
-      <td>
-        <select class="fi" style="font-size:11px;padding:2px 4px;width:130px" onchange="regEditSelect('${p.id}','type',this.value)">
-          ${['CHEM HERB','CHEM FUNG','CHEM INSECT','GLYPHOSATE','N FERTILIZER','FERTILIZER NON-N','N STAB','SEED','OTHER'].map(t=>`<option value="${t}" ${p.type===t?'selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td style="min-width:140px"><span class="ie" onclick="regEditCell('${p.id}','vendor',this)">${p.vendor||'—'}</span></td>
-      <td class="tr" style="min-width:70px"><span class="ie" onclick="regEditCell('${p.id}','price',this,'number')">$${(+p.price||0).toFixed(2)}</span></td>
-      <td>
-        <select class="fi" style="font-size:11px;padding:2px 4px;width:70px" onchange="regEditSelect('${p.id}','unit',this.value)">
-          ${['OZ','GAL','LB','TON','BAG','UNIT','SEED','ACRES'].map(u=>`<option value="${u}" ${(p.unit||'OZ')===u?'selected':''}>${u}</option>`).join('')}
-        </select>
-      </td>
-      <td class="tr" style="min-width:80px"><span class="ie" onclick="regEditCell('${p.id}','purchUnit',this,'number')" title="Container size (oz, lbs, etc.)">${p.purchUnit||128}</span></td>
-      <td style="min-width:80px">
-        <select class="fi" style="font-size:11px;padding:2px 4px;width:70px" onchange="regEditSelect('${p.id}','season',this.value)">
-          ${['2024','2025','2026','2027'].map(y=>`<option value="${y}" ${(p.season||yr)===y?'selected':''}>${y}</option>`).join('')}
-        </select>
-      </td>
-      <td style="min-width:160px"><span class="ie" onclick="regEditCell('${p.id}','ai',this)" style="font-size:11px">${p.ai||'—'}</span></td>
-      <td style="min-width:130px"><span class="ie" onclick="regEditCell('${p.id}','notes',this)" style="font-size:11px;color:var(--g400)">${p.notes||'—'}</span></td>
-      <td class="tc">
-        <input type="checkbox" ${p.selected?'checked':''} onchange="regToggleSelected('${p.id}',this.checked)" title="Select this vendor for this product">
-      </td>
+    const first=!seen.has(chemNorm(p.name)); seen.add(chemNorm(p.name));
+    const chem=isChemType(p.type), lbl=chemLabel(p.name), n=chemNet(p), ai=chemAiPerUnit(lbl,p.unit);
+    const ru=chemRateUnits(p.unit);
+    const totAi=ai?ai.reduce((s,a)=>s+a.lb,0):0;
+    let actCell, perLb='';
+    if(chem){
+      actCell=lbl&&(lbl.actives||[]).length
+        ? `<span class="ie" style="font-size:11px" onclick="chemLabelModal('${p.id}')">${lbl.actives.map(a=>`${chemEsc(a.name)} ${a.amt}${lbl.form==='dry'||lbl.strength==='pct'?'%':' lb/gal'}${(a.group||chemGroup(a.name))?` <span class="b bx" style="font-size:9px;padding:0 4px">${a.group||chemGroup(a.name)}</span>`:''}`).join('<br>')}</span>`
+        : `<span class="ie" style="font-size:11px;color:#b45309" onclick="chemLabelModal('${p.id}')">＋ add label info</span>`;
+      if(ai&&n.net>0)perLb=ai.length===1
+        ? `<b>$${(n.net/ai[0].lb).toFixed(2)}</b><div style="font-size:10px;color:var(--g400)">per lb ${chemEsc(ai[0].name)}</div>`
+        : `<b>$${(n.net/totAi).toFixed(2)}</b><div style="font-size:10px;color:var(--g400)">per lb total active</div>`;
+      else if(lbl&&!ai)perLb=`<span style="font-size:10px;color:var(--g400)" title="Price unit doesn't match a ${lbl.form} product">check unit</span>`;
+    } else actCell=`<span class="ie" style="font-size:11px" onclick="regEditCell('${p.id}','ai',this)">${chemEsc(p.ai)||'—'}</span>`;
+    const quoted=p.quoteDate?new Date(p.quoteDate+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'—';
+    rows+=`<tr ${p.selected?'style="background:#f0fdf4"':''} id="reg-row-${p.id}">
+      <td class="tc"><input type="checkbox" ${p.selected?'checked':''} onchange="regToggleSelected('${p.id}',this.checked)" title="Use this quote in plans"></td>
+      <td style="min-width:150px"><span class="ie" style="font-weight:${first?600:400};padding-left:${first?0:12}px" onclick="regEditCell('${p.id}','name',this)">${first?'':'↳ '}${chemEsc(p.name)}</span></td>
+      <td><select class="fi" style="font-size:11px;padding:2px 4px;width:112px" onchange="regEditSelect('${p.id}','type',this.value)">
+        ${REG_TYPES.map(t=>`<option ${p.type===t?'selected':''}>${t}</option>`).join('')}</select></td>
+      <td style="min-width:110px"><span class="ie" onclick="regEditCell('${p.id}','vendor',this)">${chemEsc(p.vendor)||'—'}</span></td>
+      <td style="white-space:nowrap"><span class="ie" onclick="regEditCell('${p.id}','quoteDate',this,'date')">${quoted}</span></td>
+      <td style="white-space:nowrap"><span class="ie" onclick="regEditCell('${p.id}','container',this,'number')">${p.container?(+p.container)+' '+(p.containerUnit||p.unit||'').toLowerCase():'—'}</span></td>
+      <td class="tr" style="white-space:nowrap"><span class="ie" onclick="regEditCell('${p.id}','price',this,'number')">$${(+p.price||0).toFixed(2)}</span>
+        <select class="fi" style="font-size:11px;padding:1px 2px;width:58px" onchange="regEditSelect('${p.id}','unit',this.value)">
+        ${['GAL','QT','LB','OZ','TON','BAG','UNIT','SEED','ACRES'].map(u=>`<option ${(p.unit||'GAL')===u?'selected':''}>${u}</option>`).join('')}</select></td>
+      <td class="tr" style="white-space:nowrap" title="${chemEsc(n.notes.join(' · ')||'No discounts or rebates')}">${n.notes.length?`<b style="color:var(--gm)">$${n.net.toFixed(2)}</b><div style="font-size:10px;color:var(--gm)">−${((1-n.net/(+p.price||1))*100).toFixed(1)}%</div>`:`$${n.net.toFixed(2)}`}
+        <div><span class="ie" style="font-size:10px;color:var(--g400)" onclick="chemTermsModal('${p.id}')">${(+p.prepayPct||0)+(+p.earlyPayPct||0)?'terms':'＋ terms'}</span></div></td>
+      <td>${ru?`<select class="fi" style="font-size:11px;padding:2px 4px;width:62px" onchange="regEditSelect('${p.id}','purchUnit',+this.value)" title="Unit your rate is written in">
+          ${ru.map(([l,v])=>`<option value="${v}" ${(+p.purchUnit||0)===v?'selected':''}>${l}</option>`).join('')}${ru.some(([,v])=>v===(+p.purchUnit||0))?'':`<option selected value="${+p.purchUnit||1}">${+p.purchUnit||1}/unit</option>`}</select>`
+        :`<span class="ie" onclick="regEditCell('${p.id}','purchUnit',this,'number')" title="Rate units per priced unit">${p.purchUnit||1}</span>`}</td>
+      <td style="min-width:150px">${actCell}</td>
+      <td class="tr" style="white-space:nowrap">${perLb}</td>
+      <td style="min-width:110px"><span class="ie" onclick="regEditCell('${p.id}','notes',this)" style="font-size:11px;color:var(--g400)">${chemEsc(p.notes)||'—'}</span></td>
       <td class="tc"><button class="btn btn-r btn-s" onclick="regDelete('${p.id}')">✕</button></td>
     </tr>`;
   });
-
-  if(!rows) rows=`<tr><td colspan="11" style="text-align:center;color:var(--g400);padding:28px">
-    No products match your filter. Add one below or import from your application plans.
-  </td></tr>`;
-
-  const totalProds=[...new Set((S.products||[]).map(p=>p.name))].length;
-  const totalVendors=(S.products||[]).length;
-  const selectedCount=(S.products||[]).filter(p=>p.selected).length;
-
+  if(!rows)rows=`<tr><td colspan="13" style="text-align:center;color:var(--g400);padding:28px">No products match. Enter a quote, add a product, or import from your application plans.</td></tr>`;
+  const names=new Set((S.products||[]).map(p=>chemNorm(p.name)));
+  const chemNames=new Set((S.products||[]).filter(p=>isChemType(p.type)).map(p=>chemNorm(p.name)));
+  const missingLbl=[...chemNames].filter(n=>!chemLabel(n)).length;
+  const msg=window._regMsg; window._regMsg='';
   cont.innerHTML=`
-    <div class="mg" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
-      <div class="mc"><div class="ml">Unique products</div><div class="mv">${totalProds}</div></div>
-      <div class="mc"><div class="ml">Vendor quotes</div><div class="mv">${totalVendors}</div></div>
-      <div class="mc green"><div class="ml">Selected vendors</div><div class="mv">${selectedCount}</div></div>
+    <div class="mg" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+      <div class="mc"><div class="ml">Products</div><div class="mv">${names.size}</div></div>
+      <div class="mc"><div class="ml">Vendor quotes</div><div class="mv">${S.products.length}</div></div>
+      <div class="mc green"><div class="ml">Selected quotes</div><div class="mv">${S.products.filter(p=>p.selected).length}</div></div>
+      <div class="mc ${missingLbl?'amber':''}"><div class="ml">Chem products missing label info</div><div class="mv">${missingLbl}</div></div>
     </div>
+    ${msg?`<div class="alert alert-info" style="margin-bottom:10px">${msg}</div>`:''}
     <div class="card">
       <div class="ch">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <input class="fi" id="reg-search" placeholder="Search name, vendor, a.i…" value="${window._regSearch}"
-            oninput="window._regSearch=this.value;renderInputsPage()" style="width:220px">
-          <select class="fi" id="reg-type-filter" onchange="window._regTypeFilter=this.value;renderInputsPage()" style="width:160px">
-            ${cats.map(c=>`<option value="${c}" ${c===window._regTypeFilter?'selected':''}>${c}</option>`).join('')}
-          </select>
-          <span style="font-size:11px;color:var(--g400)">${prods.length} of ${totalVendors} shown</span>
+          <input class="fi" id="reg-search" placeholder="Search name, vendor, active…" value="${chemEsc(window._regSearch||'')}"
+            oninput="window._regSearch=this.value;renderInputsPage();const e=document.getElementById('reg-search');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}" style="width:210px">
+          <select class="fi" onchange="window._regTypeFilter=this.value;renderInputsPage()" style="width:150px">
+            ${cats.map(c=>`<option ${c===tf?'selected':''}>${c}</option>`).join('')}</select>
+          <span style="font-size:11px;color:var(--g400)">${prods.length} of ${S.products.length} shown</span>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-o" onclick="regImportFromAppPlans()">📥 Import from app plans</button>
-          <button class="btn btn-p" onclick="regAddNew()">+ Add product</button>
+          <button class="btn btn-o" onclick="regAddNew()">+ Add product</button>
+          <button class="btn btn-p" onclick="chemQuoteModal()">📝 Enter a quote</button>
         </div>
       </div>
       <div class="alert alert-info" style="margin-bottom:10px;font-size:11px">
-        Click any cell to edit inline. Check <strong>✓ Selected</strong> to choose which vendor's price flows into your plan builder and purchase summary. <strong>Container size</strong> = oz per jug (128 = 1 gal), lbs per bag (16 = 1 lb bag).
+        Check <b>✓</b> on the quote you'll buy from; its <b>net price</b> (after prepay, early-pay and rebates) flows into this year's planned applications.
+        <b>Rate in</b> is the unit your per-acre rate is written in (fl oz, pt, oz, lb). Add <b>label info</b> to chemicals to see the price per pound of active ingredient.
       </div>
-      <div class="table-scroll">
-      <table>
-        <thead><tr>
-          ${sortHdr('Product name','name')}
-          ${sortHdr('Type','type')}
-          ${sortHdr('Vendor','vendor')}
-          ${sortHdr('$/unit','price')}
-          <th>Unit</th>
-          <th title="Container size">Container size</th>
-          ${sortHdr('Season','season')}
-          <th>Active ingredient(s)</th>
-          <th>Notes / return policy</th>
-          <th class="tc" title="Select this vendor">✓</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      </div>
-    </div>`;
+      <div class="table-scroll"><table>
+        <thead><tr><th class="tc" title="Use this quote">✓</th>${sortHdr('Product','name')}${sortHdr('Type','type')}${sortHdr('Vendor','vendor')}${sortHdr('Quoted','quoteDate')}
+          <th>Container</th>${sortHdr('List price','price','tr')}${sortHdr('Net price','net','tr')}<th>Rate in</th><th>Active ingredients</th><th class="tr">$ per lb active</th><th>Notes / returns</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </div>
+    ${chemRebatesCard()}`;
+}
+
+/* ── Label info modal: actives & strength from the product label ── */
+function chemLabelModal(pid){
+  const p=(S.products||[]).find(x=>x.id===pid); if(!p)return;
+  const cur=chemLabel(p.name)||{form:chemUnitAmount(p.unit,'dry')!=null&&chemUnitAmount(p.unit,'liquid')==null?'dry':'liquid',strength:'lbgal',density:'',actives:[]};
+  window._lblDraft={pid,name:p.name,form:cur.form,strength:cur.strength||'lbgal',density:cur.density||'',source:cur.source||'',
+    actives:(cur.actives||[]).map(a=>({...a}))};
+  if(!window._lblDraft.actives.length)window._lblDraft.actives.push({name:'',amt:'',group:''});
+  chemLabelRender();
+}
+function chemLabelRender(){
+  const d=window._lblDraft, p=(S.products||[]).find(x=>x.id===d.pid); if(!p)return;
+  const known=KNOWN_LABELS.find(k=>k.match.test(d.name));
+  const unitTxt=d.form==='dry'?'% by weight':d.strength==='pct'?'% by weight':'lb per gallon';
+  const lbl={form:d.form,strength:d.strength,density:d.density,actives:d.actives.filter(a=>a.name&&+a.amt>0)};
+  const ai=chemAiPerUnit(lbl,p.unit), n=chemNet(p);
+  const look=encodeURIComponent(d.name+' specimen label active ingredient');
+  openModal(`
+    ${known?`<div class="alert alert-info" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span>Label data on file for <b>${chemEsc(known.src)}</b>.</span><button class="btn btn-p btn-s" onclick="chemLabelUseKnown()">Use it</button></div>`:''}
+    <div class="fr fr3">
+      <div class="fg"><label class="fl">Form</label><select class="fi" onchange="window._lblDraft.form=this.value;chemLabelRender()">
+        <option value="liquid" ${d.form==='liquid'?'selected':''}>Liquid</option><option value="dry" ${d.form==='dry'?'selected':''}>Dry (DF, WG, granule)</option></select></div>
+      ${d.form==='liquid'?`<div class="fg"><label class="fl">Label lists strength as</label><select class="fi" onchange="window._lblDraft.strength=this.value;chemLabelRender()">
+        <option value="lbgal" ${d.strength!=='pct'?'selected':''}>lb per gallon</option><option value="pct" ${d.strength==='pct'?'selected':''}>% only</option></select></div>`:'<div></div>'}
+      ${d.form==='liquid'&&d.strength==='pct'?`<div class="fg"><label class="fl">Product weight (lb/gal, from SDS)</label><input class="fi" type="number" step="any" value="${chemEsc(d.density)}" onchange="window._lblDraft.density=this.value;chemLabelRender()"></div>`:'<div></div>'}
+    </div>
+    <table style="margin:4px 0 8px"><thead><tr><th>Active ingredient</th><th class="tr">${unitTxt}</th><th>Group</th><th></th></tr></thead><tbody>
+    ${d.actives.map((a,i)=>`<tr>
+      <td><input class="fi" list="chem-actives" value="${chemEsc(a.name)}" onchange="chemLabelSet(${i},'name',this.value)" placeholder="e.g. sulfentrazone" style="width:190px"></td>
+      <td class="tr"><input class="fi" type="number" step="any" value="${chemEsc(a.amt)}" onchange="chemLabelSet(${i},'amt',this.value)" style="width:90px;text-align:right"></td>
+      <td><input class="fi" value="${chemEsc(a.group||chemGroup(a.name))}" onchange="chemLabelSet(${i},'group',this.value)" style="width:60px" title="Site of action, e.g. H14, F11, I3A"></td>
+      <td><button class="btn btn-r btn-s" onclick="window._lblDraft.actives.splice(${i},1);chemLabelRender()">✕</button></td></tr>`).join('')}
+    </tbody></table>
+    <datalist id="chem-actives">${Object.keys(ACTIVE_GROUPS).map(a=>`<option value="${a}">`).join('')}</datalist>
+    <button class="btn btn-o btn-s" onclick="window._lblDraft.actives.push({name:'',amt:'',group:''});chemLabelRender()">+ Add active</button>
+    <a class="btn btn-o btn-s" style="margin-left:6px" target="_blank" rel="noopener" href="https://www.google.com/search?q=${look}">🔎 Look up the label</a>
+    <div class="card" style="margin:12px 0 0;padding:10px 12px;background:var(--g50)">
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">What this works out to (${chemEsc(p.vendor||'selected quote')} net $${n.net.toFixed(2)}/${chemEsc((p.unit||'').toLowerCase())})</div>
+      ${ai?`<div style="font-size:12px;line-height:1.7">${ai.map(a=>`${chemEsc(a.name)}: <b>${a.lb.toFixed(3)} lb</b> per ${chemEsc((p.unit||'').toLowerCase())}${ai.length===1&&n.net>0?` → <b>$${(n.net/a.lb).toFixed(2)} per lb</b>`:''}`).join('<br>')}
+        ${ai.length>1&&n.net>0?`<br>Total active ${ai.reduce((s,a)=>s+a.lb,0).toFixed(3)} lb → <b>$${(n.net/ai.reduce((s,a)=>s+a.lb,0)).toFixed(2)} per lb total</b>`:''}</div>`
+        :`<div style="font-size:12px;color:var(--g400)">Enter the actives and strength${d.form==='liquid'&&d.strength==='pct'?' and product weight':''}. The price unit (${chemEsc(p.unit||'—')}) must be ${d.form==='dry'?'LB, OZ or TON':'GAL, QT or OZ'}.</div>`}
+    </div>
+    <div style="font-size:11px;color:var(--g400);margin-top:8px">Saved once per product name and shared by every vendor quote for <b>${chemEsc(d.name)}</b>, in every crop year.</div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-p" onclick="chemLabelSave()">Save label info</button>
+      ${chemLabel(d.name)?`<button class="btn btn-r" onclick="chemLabelClear()">Remove</button>`:''}</div>`,
+    `Label info — ${chemEsc(d.name)}`,true);
+}
+function chemLabelSet(i,k,v){const a=window._lblDraft.actives[i];a[k]=v;if(k==='name'&&!a.group)a.group='';chemLabelRender();}
+function chemLabelUseKnown(){
+  const d=window._lblDraft, k=KNOWN_LABELS.find(x=>x.match.test(d.name)); if(!k)return;
+  d.form=k.form; d.strength='lbgal'; d.density=''; d.source=k.src;
+  d.actives=k.actives.map(([name,amt])=>({name,amt,group:chemGroup(name)}));
+  chemLabelRender();
+}
+function chemLabelSave(){
+  const d=window._lblDraft;
+  const actives=d.actives.filter(a=>String(a.name).trim()&&+a.amt>0).map(a=>({name:chemNorm(a.name),amt:+a.amt,group:String(a.group||chemGroup(a.name)).toUpperCase()}));
+  if(!actives.length){alert('Enter at least one active ingredient and its strength.');return;}
+  if(d.form==='liquid'&&d.strength==='pct'&&!(+d.density>0)){alert('Enter the product weight in lb per gallon (on the SDS) so the % can be converted.');return;}
+  if(!S.chemLabels)S.chemLabels={};
+  S.chemLabels[chemNorm(d.name)]={form:d.form,strength:d.form==='liquid'?d.strength:'pct',density:+d.density||null,actives,source:d.source||'',updated:new Date().toLocaleDateString('en-CA')};
+  save(); closeModal(); renderInputsPage();
+}
+function chemLabelClear(){
+  const d=window._lblDraft; if(!confirm(`Remove label info for ${d.name}?`))return;
+  delete S.chemLabels[chemNorm(d.name)]; save(); closeModal(); renderInputsPage();
+}
+
+/* ── Prepay / early-pay terms for one quote ── */
+function chemTermsModal(pid){
+  const p=(S.products||[]).find(x=>x.id===pid); if(!p)return;
+  openModal(`<div class="fr fr2">
+      <div class="fg"><label class="fl">Prepay discount %</label><input class="fi" id="chemt-pre" type="number" step="any" value="${+p.prepayPct||''}"></div>
+      <div class="fg"><label class="fl">Early-pay / cash discount %</label><input class="fi" id="chemt-early" type="number" step="any" value="${+p.earlyPayPct||''}"></div></div>
+    <div style="font-size:11px;color:var(--g400)">Company rebate programs (per gallon, % of purchase, per acre) go in <b>Rebates & pricing programs</b> below the table.</div>
+    <button class="btn btn-p" style="margin-top:10px" onclick="chemTermsSave('${pid}')">Save</button>`,`Pricing terms — ${chemEsc(p.name)} / ${chemEsc(p.vendor||'')}`);
+}
+function chemTermsSave(pid){
+  const p=(S.products||[]).find(x=>x.id===pid); if(!p)return;
+  p.prepayPct=parseFloat(document.getElementById('chemt-pre').value)||0;
+  p.earlyPayPct=parseFloat(document.getElementById('chemt-early').value)||0;
+  const r=p.selected?chemResync([p]):null;
+  if(r&&r.lines)regMsg(`Net price updated on ${r.lines} planned application line${r.lines===1?'':'s'} (${r.fields} field${r.fields===1?'':'s'}).`);
+  save(); closeModal(); renderInputsPage();
+}
+
+/* ── Enter a quote: one vendor, one date, many lines (made for copying handwritten quotes) ── */
+function chemQuoteModal(){
+  const vendors=[...new Set((S.products||[]).map(p=>p.vendor).filter(Boolean))].sort();
+  window._qDraft={vendor:'',date:new Date().toLocaleDateString('en-CA'),prepay:'',early:'',
+    lines:Array.from({length:5},()=>({name:'',type:'CHEM HERB',size:2.5,sizeUnit:'GAL',price:'',per:'GAL',use:true}))};
+  window._qVendors=vendors;
+  chemQuoteRender();
+}
+function chemQuoteRender(){
+  const d=window._qDraft, names=[...new Set((S.products||[]).map(p=>p.name))].sort();
+  const hasName=d.lines.some(l=>l.name);
+  openModal(`
+    <div class="fr fr4">
+      <div class="fg"><label class="fl">Vendor</label><input class="fi" list="q-vendors" value="${chemEsc(d.vendor)}" onchange="window._qDraft.vendor=this.value"></div>
+      <div class="fg"><label class="fl">Quote date</label><input class="fi" type="date" value="${d.date}" onchange="window._qDraft.date=this.value"></div>
+      <div class="fg"><label class="fl">Prepay %</label><input class="fi" type="number" step="any" value="${chemEsc(d.prepay)}" onchange="window._qDraft.prepay=this.value"></div>
+      <div class="fg"><label class="fl">Early-pay %</label><input class="fi" type="number" step="any" value="${chemEsc(d.early)}" onchange="window._qDraft.early=this.value"></div>
+    </div>
+    <datalist id="q-vendors">${window._qVendors.map(v=>`<option value="${chemEsc(v)}">`).join('')}</datalist>
+    <datalist id="q-names">${names.map(n=>`<option value="${chemEsc(n)}">`).join('')}</datalist>
+    <div class="table-scroll"><table class="q-tbl"><thead><tr><th>Product</th><th>Type</th><th>Container</th><th class="tr">Price</th><th>Per</th><th class="tc" title="Make this the quote you'll buy from">Use</th></tr></thead><tbody>
+    ${d.lines.map((l,i)=>`<tr>
+      <td><input class="fi" list="q-names" value="${chemEsc(l.name)}" onchange="chemQuoteSet(${i},'name',this.value)" style="width:180px"></td>
+      <td><select class="fi" style="width:110px" onchange="chemQuoteSet(${i},'type',this.value)">${REG_TYPES.map(t=>`<option ${l.type===t?'selected':''}>${t}</option>`).join('')}</select></td>
+      <td style="white-space:nowrap"><input class="fi" type="number" step="any" value="${chemEsc(l.size)}" onchange="chemQuoteSet(${i},'size',this.value)" style="width:62px">
+        <select class="fi" style="width:62px" onchange="chemQuoteSet(${i},'sizeUnit',this.value)">${['GAL','LB','QT','OZ'].map(u=>`<option ${l.sizeUnit===u?'selected':''}>${u}</option>`).join('')}</select></td>
+      <td class="tr">$<input class="fi" type="number" step="any" value="${chemEsc(l.price)}" onchange="chemQuoteSet(${i},'price',this.value)" style="width:80px;text-align:right"></td>
+      <td><select class="fi" style="width:100px" onchange="chemQuoteSet(${i},'per',this.value)">
+        <option value="${l.sizeUnit}" ${l.per!=='container'?'selected':''}>per ${l.sizeUnit.toLowerCase()}</option><option value="container" ${l.per==='container'?'selected':''}>per container</option></select></td>
+      <td class="tc"><input type="checkbox" ${l.use?'checked':''} onchange="chemQuoteSet(${i},'use',this.checked,true)"></td></tr>`).join('')}
+    </tbody></table></div>
+    <button class="btn btn-o btn-s" onclick="window._qDraft.lines.push({name:'',type:'CHEM HERB',size:2.5,sizeUnit:'GAL',price:'',per:'GAL',use:true});chemQuoteRender()">+ More lines</button>
+    <div style="font-size:11px;color:var(--g400);margin-top:8px">“Per container” divides the price by the container size (e.g. $250 per 2.5 gal jug = $100/gal).
+      A product already quoted by this vendor in the same container size is updated instead of duplicated.</div>
+    <button class="btn btn-p" style="margin-top:12px" onclick="chemQuoteSave()" ${hasName?'':''}>Save quote</button>`,
+    'Enter a quote',true);
+}
+function chemQuoteSet(i,k,v,noRender){
+  const l=window._qDraft.lines[i]; l[k]=v;
+  if(k==='sizeUnit'&&l.per!=='container')l.per=v;
+  if(k==='name'){const ex=(S.products||[]).find(p=>chemNorm(p.name)===chemNorm(v));if(ex){l.type=ex.type||l.type;if(ex.container){l.size=ex.container;l.sizeUnit=ex.containerUnit||ex.unit||l.sizeUnit;l.per=l.per==='container'?'container':l.sizeUnit;}}}
+  if(!noRender)chemQuoteRender();
+}
+function chemQuoteSave(){
+  const d=window._qDraft, vendor=String(d.vendor||'').trim();
+  if(!vendor){alert('Enter the vendor.');return;}
+  const lines=d.lines.filter(l=>String(l.name).trim()&&+l.price>0);
+  if(!lines.length){alert('Enter at least one product with a price.');return;}
+  if(!S.products)S.products=[];
+  let added=0,updated=0;
+  lines.forEach(l=>{
+    const name=String(l.name).trim(), size=+l.size||0, unit=l.sizeUnit;
+    const price=l.per==='container'?(size>0?(+l.price)/size:+l.price):+l.price;
+    const prev=S.products.find(p=>chemNorm(p.name)===chemNorm(name));          // copy rate-unit setup from an earlier quote of this product
+    let p=S.products.find(p=>chemNorm(p.name)===chemNorm(name)&&chemNorm(p.vendor)===chemNorm(vendor)&&(+p.container||0)===size&&(p.containerUnit||p.unit)===unit);
+    if(!p){
+      const ru=chemRateUnits(unit);
+      p={id:'p'+Date.now()+Math.random().toString(36).slice(2,6),name:prev?prev.name:name,type:l.type,vendor,unit,
+        purchUnit:prev&&prev.unit===unit?prev.purchUnit:(ru?ru[0][1]:1),season:S.settings?.year||'2026',ai:'',notes:'',selected:false};
+      S.products.push(p); added++;
+    } else updated++;
+    Object.assign(p,{type:l.type,price:Math.round(price*10000)/10000,unit,container:size||null,containerUnit:unit,quoteDate:d.date,
+      prepayPct:parseFloat(d.prepay)||0,earlyPayPct:parseFloat(d.early)||0});
+    if(l.use){S.products.forEach(x=>{if(chemNorm(x.name)===chemNorm(p.name))x.selected=false;});p.selected=true;}
+  });
+  const r=chemResync(lines.map(l=>String(l.name).trim()));
+  regMsg(`Quote saved: ${added} new, ${updated} updated from ${chemEsc(vendor)}.`+(r.lines?` Net prices updated on ${r.lines} planned application line${r.lines===1?'':'s'} (${r.fields} field${r.fields===1?'':'s'}).`:''));
+  save(); closeModal(); renderInputsPage();
+}
+
+/* ── Rebates & pricing programs ── */
+const CHEM_REBATE_KINDS={pct:'% of purchase',perUnit:'$ per gal / lb',perAcre:'$ per acre',flat:'Flat $'};
+function chemRebatesCard(){
+  const R=S.chemRebates||[];
+  const rows=R.map(r=>`<tr style="${r.counted?'':'color:var(--g400)'}">
+    <td><b>${chemEsc(r.name)}</b>${r.company?`<div style="font-size:11px;color:var(--g400)">${chemEsc(r.company)}</div>`:''}</td>
+    <td style="font-size:12px">${chemEsc(r.products)||(r.vendor?'Everything from '+chemEsc(r.vendor):'—')}${r.vendor&&r.products?`<div style="font-size:11px;color:var(--g400)">only from ${chemEsc(r.vendor)}</div>`:''}</td>
+    <td>${CHEM_REBATE_KINDS[r.kind]||r.kind}</td>
+    <td class="tr">${r.kind==='pct'?(+r.amount)+'%':'$'+(+r.amount||0).toFixed(2)}</td>
+    <td style="font-size:12px;color:var(--g700)">${chemEsc(r.requirement)||'—'}</td>
+    <td style="font-size:11px">${r.kind==='perAcre'||r.kind==='flat'?'<span class="b ba">in scenario totals</span>':'<span class="b bg">in net price</span>'}</td>
+    <td class="tc"><input type="checkbox" ${r.counted?'checked':''} onchange="chemRebateToggle('${r.id}',this.checked)" title="Count it in my numbers"></td>
+    <td class="tc" style="white-space:nowrap"><button class="btn btn-o btn-s" onclick="chemRebateModal('${r.id}')">Edit</button> <button class="btn btn-r btn-s" onclick="chemRebateDelete('${r.id}')">✕</button></td></tr>`).join('');
+  return `<div class="card">
+    <div class="ch"><div><div class="ct">Rebates & pricing programs — ${S.settings?.year||''}</div>
+      <div class="cs">Company rebates, bundle programs and volume deals. Uncheck “count” for ones you might not qualify for.</div></div>
+      <button class="btn btn-p btn-s" onclick="chemRebateModal()">+ Add rebate / program</button></div>
+    ${R.length?`<div class="table-scroll"><table><thead><tr><th>Program</th><th>Applies to</th><th>Type</th><th class="tr">Amount</th><th>Requirement</th><th>Where it counts</th><th class="tc">Count</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      :`<div style="color:var(--g400);font-size:13px;padding:6px 0 4px">None yet. Examples: “3% if you buy 2 Corteva residuals”, “$8/acre on a Bayer program”, “$2/gal off Atrazine over 200 gal”.</div>`}
+  </div>`;
+}
+function chemRebateModal(id){
+  const r=(S.chemRebates||[]).find(x=>x.id===id)||{id:'',name:'',company:'',vendor:'',products:'',kind:'pct',amount:'',requirement:'',counted:true};
+  const names=[...new Set((S.products||[]).filter(p=>isChemType(p.type)).map(p=>p.name))].sort();
+  openModal(`
+    <div class="fr fr2">
+      <div class="fg"><label class="fl">Program name</label><input class="fi" id="rb-name" value="${chemEsc(r.name)}" placeholder="e.g. Corteva Residual Rewards"></div>
+      <div class="fg"><label class="fl">Company</label><input class="fi" id="rb-co" value="${chemEsc(r.company)}" placeholder="Manufacturer or dealer"></div></div>
+    <div class="fr fr2">
+      <div class="fg"><label class="fl">Type</label><select class="fi" id="rb-kind">${Object.entries(CHEM_REBATE_KINDS).map(([k,l])=>`<option value="${k}" ${r.kind===k?'selected':''}>${l}</option>`).join('')}</select></div>
+      <div class="fg"><label class="fl">Amount (% or $)</label><input class="fi" id="rb-amt" type="number" step="any" value="${chemEsc(r.amount)}"></div></div>
+    <div class="fg"><label class="fl">Products it applies to (comma-separated; leave blank for everything from the vendor below)</label>
+      <input class="fi" id="rb-prods" value="${chemEsc(r.products)}" placeholder="${chemEsc(names.slice(0,3).join(', '))}"></div>
+    <div style="font-size:11px;color:var(--g400);margin:-4px 0 8px">Your products: ${names.map(n=>`<span class="ie" style="font-size:11px" onclick="const e=document.getElementById('rb-prods');e.value=(e.value?e.value.replace(/,\\s*$/,'')+', ':'')+this.textContent">${chemEsc(n)}</span>`).join(' · ')||'—'}</div>
+    <div class="fr fr2">
+      <div class="fg"><label class="fl">Only when buying from (optional)</label><input class="fi" id="rb-vendor" value="${chemEsc(r.vendor)}"></div>
+      <div class="fg"><label class="fl">Requirement / notes</label><input class="fi" id="rb-req" value="${chemEsc(r.requirement)}" placeholder="e.g. buy 2+ residuals by Dec 15"></div></div>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="rb-count" ${r.counted?'checked':''}> Count it in my numbers</label>
+    <div style="font-size:11px;color:var(--g400);margin-top:6px">% and $ per gal/lb rebates lower the product's net price right away. $ per acre and flat rebates are counted when scenarios are compared.</div>
+    <button class="btn btn-p" style="margin-top:12px" onclick="chemRebateSave('${r.id}')">Save</button>`,
+    r.id?'Edit rebate / program':'Add rebate / program');
+}
+function chemRebateSave(id){
+  const v=k=>document.getElementById(k).value.trim();
+  const rec={name:v('rb-name'),company:v('rb-co'),kind:v('rb-kind'),amount:parseFloat(v('rb-amt'))||0,products:v('rb-prods').replace(/,\s*$/,''),
+    vendor:v('rb-vendor'),requirement:v('rb-req'),counted:document.getElementById('rb-count').checked};
+  if(!rec.name){alert('Give the program a name.');return;}
+  if(!rec.products&&!rec.vendor){alert('List the products it applies to, or the vendor it applies to.');return;}
+  if(!S.chemRebates)S.chemRebates=[];
+  const ex=S.chemRebates.find(x=>x.id===id);
+  const touched=chemRebateTargets(ex);                       // products it applied to before the edit
+  if(ex)Object.assign(ex,rec); else S.chemRebates.push({id:'rb'+Date.now(),...rec});
+  const r=chemResync([...touched,...chemRebateTargets(ex||S.chemRebates[S.chemRebates.length-1])]);
+  if(r.lines)regMsg(`Net price updated on ${r.lines} planned application line${r.lines===1?'':'s'} (${r.fields} field${r.fields===1?'':'s'}).`);
+  save(); closeModal(); renderInputsPage();
+}
+function chemRebateToggle(id,on){
+  const x=(S.chemRebates||[]).find(r=>r.id===id); if(!x)return; x.counted=on;
+  const r=chemResync(chemRebateTargets(x)); if(r.lines)regMsg(`Net price updated on ${r.lines} planned application line${r.lines===1?'':'s'}.`);
+  save(); renderInputsPage();
+}
+function chemRebateDelete(id){
+  if(!confirm('Remove this rebate / program?'))return;
+  const x=(S.chemRebates||[]).find(r=>r.id===id), touched=chemRebateTargets(x);
+  S.chemRebates=(S.chemRebates||[]).filter(r=>r.id!==id);
+  const r=chemResync(touched); if(r.lines)regMsg(`Net price updated on ${r.lines} planned application line${r.lines===1?'':'s'}.`);
+  save(); renderInputsPage();
 }
 
 function regSort(col){
@@ -6372,7 +6674,7 @@ function regSort(col){
 // application lines that match this product AND vendor. Applied (Actual) lines
 // are left untouched so historical purchase costs stay accurate.
 function syncSelectedPriceToPlans(p){
-  const newPrice=+p.price||0;
+  const newPrice=Math.round(chemNet(p).net*10000)/10000;   // net of prepay / early-pay / rebates
   const norm=s=>String(s||'').trim().toLowerCase();
   const wantProduct=norm(p.name), wantVendor=norm(p.vendor);
   let count=0; const fieldSet=new Set();
@@ -6383,24 +6685,24 @@ function syncSelectedPriceToPlans(p){
       }
     });
   });
-  return {count, fields:fieldSet.size};
+  return {count, fields:fieldSet.size, fieldIds:[...fieldSet]};
 }
 
 function regEditCell(id,field,el,type){
   const p=(S.products||[]).find(x=>x.id===id); if(!p) return;
   const cur=field==='price'?p[field]:p[field]||'';
-  iePop(el,`Edit ${field}`,cur,(nv)=>{
+  const LBL={name:'Product name',vendor:'Vendor',price:`List price per ${(p.unit||'unit').toLowerCase()}`,quoteDate:'Quote date',
+    container:`Container size (${(p.containerUnit||p.unit||'').toLowerCase()})`,purchUnit:'Rate units per price unit',ai:'Active ingredient(s)',notes:'Notes / return policy'};
+  iePop(el,LBL[field]||`Edit ${field}`,cur,(nv)=>{
     const oldVal=p[field];
     p[field]=type==='number'?(parseFloat(nv)||0):nv;
     // If a SELECTED vendor's price actually changed, flow it to planned app lines.
     if(field==='price' && p.selected && (+p.price||0)!==(+oldVal||0)){
       const res=syncSelectedPriceToPlans(p);
+      regMsg(res.count>0
+        ?`Net price $${chemNet(p).net.toFixed(2)} applied to ${res.count} planned application${res.count===1?'':'s'} across ${res.fields} field${res.fields===1?'':'s'} (${S.settings.year}). Applied applications were left unchanged.`
+        :`Price saved. No planned ${S.settings.year} applications use ${chemEsc(p.name)}${p.vendor?' / '+chemEsc(p.vendor):''}, so nothing on the application pages changed.`);
       save(); renderInputsPage();
-      if(res.count>0){
-        alert(`Updated price to $${(+p.price||0).toFixed(2)} on ${res.count} planned application${res.count===1?'':'s'} across ${res.fields} field${res.fields===1?'':'s'} (${S.settings.year}). Applied applications were left unchanged.`);
-      } else {
-        alert(`Price saved. No planned ${S.settings.year} applications matched ${p.name}${p.vendor?' / '+p.vendor:''}, so nothing on the application pages changed.`);
-      }
       return;
     }
     save(); renderInputsPage();
@@ -6409,14 +6711,22 @@ function regEditCell(id,field,el,type){
 
 function regEditSelect(id,field,val){
   const p=(S.products||[]).find(x=>x.id===id); if(!p) return;
-  p[field]=val; save();
+  p[field]=val;
+  if(field==='unit'){                       // keep the rate unit sensible for the new price unit
+    const ru=chemRateUnits(val);
+    if(ru&&!ru.some(([,v])=>v===(+p.purchUnit||0)))p.purchUnit=ru[0][1];
+  }
+  save();
+  if(field==='unit'||field==='type')renderInputsPage();
 }
 
 function regToggleSelected(id, checked){
   const p=(S.products||[]).find(x=>x.id===id); if(!p) return;
   if(checked){
-    (S.products||[]).forEach(x=>{if(x.name===p.name) x.selected=false;});
+    (S.products||[]).forEach(x=>{if(chemNorm(x.name)===chemNorm(p.name)) x.selected=false;});
     p.selected=true;
+    const res=syncSelectedPriceToPlans(p);
+    if(res.count)regMsg(`Using ${chemEsc(p.vendor||'this quote')} for ${chemEsc(p.name)}: net price $${chemNet(p).net.toFixed(2)} applied to ${res.count} planned application line${res.count===1?'':'s'} where the vendor matches.`);
   } else { p.selected=false; }
   save(); renderInputsPage();
 }
@@ -6787,15 +7097,15 @@ function ipDeleteLine(planId,lineId){
 ──────────────────────────────────────────────────── */
 function renderInputsSummary(cont){
   const totals={};
-  Object.entries(S.appPlans||{}).forEach(([key,fieldPlan])=>{
-    const fid=parseInt(key.split('_')[0]);
-    const field=(S.fields||[]).find(f=>f.id===fid);
+  // This crop year's fields only (app plans for every year share one store, keyed field_year).
+  (S.fields||[]).forEach(field=>{
+    const fieldPlan=getFieldPlan(field.id);
     (fieldPlan||[]).forEach(li=>{
       const k=li.product+'||'+li.vendor;
       if(!totals[k]) totals[k]={product:li.product,vendor:li.vendor,category:li.category,
         unit:li.uom||'OZ',purchUnit:li.purchUnit||128,costPerUnit:li.costPerUnit||0,
         totalUnits:0,totalCost:0,fields:[]};
-      const unitsNeeded=(li.rate||0)*(li.appliedAcres||0)/(li.purchUnit||128);
+      const unitsNeeded=calcRowUnits(li,field.acres);   // same math as the App Plan page (blank acres = whole field)
       totals[k].totalUnits+=unitsNeeded;
       totals[k].totalCost+=unitsNeeded*(li.costPerUnit||0);
       if(field) totals[k].fields.push(field.name);
@@ -6851,11 +7161,11 @@ function renderInputsSummary(cont){
 function renderInputsInventory(cont){
   if(!S.inventory) S.inventory=[];
   const needs={};
-  Object.values(S.appPlans||{}).forEach(fp=>{
-    (fp||[]).forEach(li=>{
+  (S.fields||[]).forEach(field=>{               // this crop year only
+    getFieldPlan(field.id).forEach(li=>{
       const k=li.product;
       if(!needs[k]) needs[k]={product:li.product,unit:li.uom||'OZ',purchUnit:li.purchUnit||128,totalUnits:0};
-      needs[k].totalUnits+=(li.rate||0)*(li.appliedAcres||0)/(li.purchUnit||128);
+      needs[k].totalUnits+=calcRowUnits(li,field.acres);
     });
   });
   const totalProds=Object.keys(needs).length;
