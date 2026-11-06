@@ -307,6 +307,20 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 .wx-acc table td,.wx-acc table th{text-align:center}
 .wx-acc table td:first-child,.wx-acc table th:first-child{text-align:left}
 .wx-acc p{font-size:12px;color:var(--g700);margin:4px 0 10px;line-height:1.5}
+/* 72-hour hourly table */
+.wx-hr table{font-size:12.5px}
+.wx-hr th{font-size:10.5px;line-height:1.2;text-align:center;padding:5px 6px;white-space:nowrap}
+.wx-hr td{text-align:center;padding:2px 6px;white-space:nowrap;border-bottom:1px solid var(--g100,#eef0f2)}
+.wx-hr td:first-child,.wx-hr th:first-child{text-align:right;position:sticky;left:0;background:#fff;z-index:1;font-weight:600;color:var(--g700)}
+.wx-hr td.sky{text-align:left}
+.wx-hr tr.night td{background:#f4f5f7}
+.wx-hr tr.night td:first-child{background:#f4f5f7}
+.wx-hr tr.wx-hday td{background:var(--g50);color:var(--gd);font-weight:700;text-align:left;padding:5px 8px;border-top:2px solid var(--g200)}
+.wx-hr .cold{background:#d6e6fb!important}
+.wx-hr .windy{background:#fbd5da!important}
+.wx-hr .wet{background:#fff36b!important}
+.wx-hr-note{font-size:11.5px;color:var(--g700);margin:8px 0 0;line-height:1.7}
+.wx-hr-note span{padding:1px 6px;border-radius:2px;margin-right:4px}
 /* Dashboard strip */
 .wx-strip{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
 .wx-sd{flex:1 0 92px;border:1px solid var(--g200);border-radius:var(--r);padding:6px 6px 7px;text-align:center;font-size:12px;cursor:pointer;background:#fff}
@@ -9693,6 +9707,7 @@ function renderCashflow(){
 const WX={
   lat:43.03642, lon:-93.77456,               // 43°02'11.1"N 93°46'28.4"W
   place:'Hancock Co., IA', tz:'America/Chicago', days:15,
+  hours:72, hrStep:1, hrData:null,             // 72-hour hourly look-ahead (website only, not printed)
   models:[
     {id:'ncep_nbm_conus', name:'NWS Blend (NBM)', weight:2},
     {id:'ecmwf_ifs025',   name:'ECMWF',           weight:2},
@@ -9717,6 +9732,8 @@ const WX_DAILY=['weather_code','temperature_2m_max','temperature_2m_min','appare
   'apparent_temperature_min','wind_speed_10m_max','wind_direction_10m_dominant','dew_point_2m_mean',
   'relative_humidity_2m_mean','precipitation_probability_max','precipitation_sum','snowfall_sum',
   'et0_fao_evapotranspiration','cloud_cover_mean'];
+const WX_HOURLY=['temperature_2m','apparent_temperature','dew_point_2m','relative_humidity_2m','precipitation_probability',
+  'precipitation','snowfall','wind_speed_10m','wind_direction_10m','wind_gusts_10m','cloud_cover','weather_code','is_day'];
 
 const wxR0=v=>v==null?null:Math.round(v);
 const wxCompass=d=>d==null?'':['N','NE','E','SE','S','SW','W','NW'][Math.round(d/45)%8];
@@ -9728,10 +9745,12 @@ const wxMD=s=>s.slice(5,7)+'/'+s.slice(8,10);
 async function wxFetchModel(m){
   const p=new URLSearchParams({latitude:WX.lat,longitude:WX.lon,daily:WX_DAILY.join(','),
     temperature_unit:'fahrenheit',wind_speed_unit:'mph',precipitation_unit:'inch',
-    timezone:WX.tz,forecast_days:16,models:m.id});
+    timezone:WX.tz,forecast_days:16,models:m.id,
+    hourly:WX_HOURLY.join(','),forecast_hours:WX.hours+4});   // a few extra so a cached load still covers 72 h
   const r=await fetch('https://api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(15000)});
   if(!r.ok) throw new Error(m.name+': HTTP '+r.status);
-  return {model:m,daily:(await r.json()).daily};
+  const j=await r.json();
+  return {model:m,daily:j.daily,hourly:j.hourly||{time:[]}};
 }
 // Projected 4" soil temp per day: equal blend of
 //   ECMWF — hourly 6cm & 18cm layers, linearly interpolated to 4" (10.2 cm)
@@ -9889,6 +9908,7 @@ function wxLoad(force){
       WX.soil=so.status==='fulfilled'?so.value:null;
       WX.soilErr=sf.status==='rejected'&&so.status==='rejected'?'soil temps unavailable':null;
       days.forEach(d=>{const s=fc[d.date];d.soil=s?Math.round(s.avg):null;d.soilRange=s?`${Math.round(s.min)}–${Math.round(s.max)}`:'';d.soilParts=s?s.parts.join(", "):'';});
+      try{WX.hrData=wxBuildHours(res);}catch(e){WX.hrData=null;console.warn('hourly build failed',e);}
       WX.data=days; WX.used=res.map(r=>r.model.name); WX.fetchedAt=Date.now(); WX.err=null;
     }catch(e){WX.err=e.message||String(e);}
     finally{WX.loading=null;}
@@ -9971,6 +9991,7 @@ function renderWeather(){
         <div class="table-scroll">${body}</div>
         <div class="wx-foot"><span>Blend of ${(WX.used.length?WX.used:WX.models.map(m=>m.name)).join(', ')} · via Open-Meteo · 4" soil: daily avg projected by ECMWF + GFS blend, actual from ISU Soil Moisture Network</span><span>${wxThreshText()}</span></div>
       </div>
+      ${wxHourlyHtml()}
       ${wxAccHtml()}
     </div>`;
 }
@@ -10072,6 +10093,85 @@ async function wxScore(){
   }catch(e){WX.accErr=e.message||String(e);}
   finally{WX.accLoading=false;}
   if(curPage==='weather')renderWeather();
+}
+/* ── 72-hour hourly look-ahead (website only) ── */
+// Same weighted model blend as the daily sheet, hour by hour. Models are matched on timestamp.
+function wxBuildHours(res){
+  const base=res.find(r=>r.hourly&&r.hourly.time&&r.hourly.time.length); if(!base)return null;
+  const idx=res.map(r=>{const m={};(r.hourly.time||[]).forEach((t,i)=>m[t]=i);return m;});
+  const blend=(f,t)=>{let s=0,w=0;res.forEach((r,k)=>{const i=idx[k][t],v=i==null||!r.hourly[f]?null:r.hourly[f][i];
+    if(v!=null&&!Number.isNaN(v)){s+=v*r.model.weight;w+=r.model.weight;}});return w?s/w:null;};
+  const dir=t=>{let x=0,y=0;res.forEach((r,k)=>{const i=idx[k][t];if(i==null||!r.hourly.wind_direction_10m)return;
+    const d=r.hourly.wind_direction_10m[i],s=r.hourly.wind_speed_10m[i];if(d==null||s==null)return;
+    const a=d*Math.PI/180;x+=Math.sin(a)*s*r.model.weight;y+=Math.cos(a)*s*r.model.weight;});
+    return(!x&&!y)?null:(Math.atan2(x,y)*180/Math.PI+360)%360;};
+  return base.hourly.time.map(t=>({t,
+    temp:wxR0(blend('temperature_2m',t)), feels:wxR0(blend('apparent_temperature',t)),
+    dew:wxR0(blend('dew_point_2m',t)), rh:wxR0(blend('relative_humidity_2m',t)),
+    pop:wxR0(blend('precipitation_probability',t))||0, precip:blend('precipitation',t)||0, snow:blend('snowfall',t)||0,
+    wind:wxR0(blend('wind_speed_10m',t)), gust:wxR0(blend('wind_gusts_10m',t)), dir:wxCompass(dir(t)),
+    cloud:wxR0(blend('cloud_cover',t)), day:(blend('is_day',t)||0)>=0.5,
+    thunder:res.some((r,k)=>{const i=idx[k][t];return i!=null&&((r.hourly.weather_code||[])[i]||0)>=95;})}))
+    .filter(h=>h.temp!=null);
+}
+function wxHrSky(h){
+  if(h.precip>=0.005&&h.pop>=25){
+    const sn=h.snow>=0.02, mostlySnow=sn&&h.snow/10>=0.6*h.precip;
+    const type=h.thunder?'T-Storm':mostlySnow?'Snow':sn?'Rain/Snow':'Rain';
+    return(h.precip<0.03&&!h.thunder?'Lt ':'')+type;
+  }
+  const c=h.cloud==null?50:h.cloud;
+  if(c<20)return h.day?'Sunny':'Clear';
+  if(c<50)return h.day?'Partly Sunny':'Partly Cloudy';
+  if(c<80)return'Mostly Cloudy';
+  return'Cloudy';
+}
+// Current hour in farm time, as "YYYY-MM-DDTHH:00" (same format Open-Meteo uses)
+function wxNowHour(){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:WX.tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'})
+    .formatToParts(new Date()).map(x=>[x.type,x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:00`;
+}
+function wxSetHrStep(n){WX.hrStep=n;renderWeather();}
+function wxHourlyHtml(){
+  if(!WX.hrData||!WX.hrData.length)return'';
+  const now=wxNowHour(), all=WX.hrData.filter(h=>h.t>=now).slice(0,WX.hours), step=WX.hrStep;
+  if(!all.length)return'';
+  // 3-hour view: each row covers that hour + the next two (precip summed, chance = highest)
+  const rows=[];
+  for(let i=0;i<all.length;i+=step){
+    const g=all.slice(i,i+step), h={...g[0]};
+    h.precip=g.reduce((s,x)=>s+x.precip,0); h.snow=g.reduce((s,x)=>s+x.snow,0);
+    h.pop=Math.max(...g.map(x=>x.pop)); h.thunder=g.some(x=>x.thunder);
+    h.gust=Math.max(...g.map(x=>x.gust==null?-1:x.gust)); if(h.gust<0)h.gust=null;
+    rows.push(h);
+  }
+  const t=WX.thresholds, cols=13;
+  const hr=s=>{const n=+s.slice(11,13);return(n%12||12)+(n<12?' AM':' PM');};
+  const dayName=s=>new Date(wxDayNum(s.slice(0,10))*864e5).toLocaleDateString('en-US',{timeZone:'UTC',weekday:'long',month:'short',day:'numeric'});
+  let last='', body='';
+  rows.forEach(h=>{
+    const d=h.t.slice(0,10);
+    if(d!==last){body+=`<tr class="wx-hday"><td colspan="${cols}">${dayName(h.t)}</td></tr>`;last=d;}
+    const cold=t.freezeLowF!=null&&h.temp<=t.freezeLowF, windy=t.windMph!=null&&h.wind!=null&&h.wind>=t.windMph;
+    const wet=h.pop>=WX.highlightPop;
+    body+=`<tr class="${h.day?'':'night'}">
+      <td>${hr(h.t)}</td><td class="sky">${wxHrSky(h)}</td>
+      <td class="${cold?'cold':''}"><b>${h.temp}</b></td><td>${h.feels??'-'}</td><td>${h.dew??'-'}</td><td>${h.rh??'-'}</td>
+      <td class="${windy?'windy':''}">${h.wind??'-'}</td><td>${h.gust??'-'}</td><td>${h.dir}</td>
+      <td class="${wet?'wet':''}">${h.pop>=5||h.precip>=0.005?h.pop:'-'}</td>
+      <td class="${wet?'wet':''}">${h.precip>=0.005?h.precip.toFixed(2):'-'}</td>
+      <td>${h.snow>=0.05?h.snow.toFixed(1):'-'}</td><td>${h.cloud??'-'}</td></tr>`;
+  });
+  const btn=(n,l)=>`<button class="btn btn-s ${WX.hrStep===n?'btn-p':'btn-o'}" onclick="wxSetHrStep(${n})">${l}</button>`;
+  return `<div class="card wx-hr wx-noprint">
+    <div class="ch"><div class="ct">Next 72 hours — hour by hour</div><div style="display:flex;gap:6px">${btn(1,'Every hour')}${btn(3,'Every 3 hours')}</div></div>
+    <div class="table-scroll"><table><thead><tr><th>Time</th><th>Sky</th><th>Temp<br>°F</th><th>Feels<br>°F</th><th>Dew pt<br>°F</th><th>Humid<br>%</th>
+      <th>Wind<br>mph</th><th>Gust<br>mph</th><th>Dir</th><th>Precip<br>%</th><th>Precip<br>in.${step>1?' (3 hr)':''}</th><th>Snow<br>in.</th><th>Cloud<br>%</th></tr></thead>
+    <tbody>${body}</tbody></table></div>
+    <p class="wx-hr-note">Same model blend as the 15-day sheet. Shaded: <span class="cold">temp ≤ ${t.freezeLowF}°F</span>
+      <span class="windy">wind ≥ ${t.windMph} mph</span> <span class="wet">precip chance ≥ ${WX.highlightPop}%</span> · grey rows are night.</p>
+  </div>`;
 }
 function wxAccHtml(){
   const head=`<div class="ch"><div class="ct">How accurate has this forecast been?</div>
