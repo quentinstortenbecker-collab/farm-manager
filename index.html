@@ -299,6 +299,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
 .wx-cond-in svg{flex:0 0 auto}
 .wx-cond-in span{flex:1;text-align:center}
 .wx-table td.hl span{background:linear-gradient(transparent 12%,#fff36b 12%,#fff36b 88%,transparent 88%);padding:0 5px}
+.wx-table td.soil-cold span{background:#d6e6fb;padding:0 5px;border-radius:2px}
+.wx-legend .sb{display:inline-block;width:16px;height:13px;background:#d6e6fb;border:1px solid #9cbcec;vertical-align:-1px;margin:0 6px 0 18px}
+.wx-soilnow{font-size:12px;color:var(--g700);margin:0 0 6px;line-height:1.45}
+.wx-soilnow b{color:#2b2b2b}
 .wx-foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--g700);margin-top:10px}
 .wx-acc table td,.wx-acc table th{text-align:center}
 .wx-acc table td:first-child,.wx-acc table th:first-child{text-align:left}
@@ -318,8 +322,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   .wx-table{min-width:0}
   .wx-titlebar h2{font-size:18px}.wx-legend{font-size:13px}.wx-legend i{height:13px}
   .wx-table td{font-size:13px}
-  .wx-table td.wx-day{position:sticky;left:0;z-index:1}
-  .wx-cond-in svg{width:34px;height:32px}
+  .wx-table td.wx-day{position:sticky;left:0;z-index:1;padding-right:6px}
+  .wx-table th{width:auto!important;font-size:11px}
+  .wx-table th:first-child{width:44px!important}
+  .wx-table th:nth-child(2){width:66px!important}
+  .wx-cond-in{flex-direction:column;gap:0}
+  .wx-cond-in span{font-size:10.5px;line-height:1.15}
+  .wx-cond-in svg{width:30px;height:28px}
 }
 @page wxportrait{size:letter portrait;margin:.35in}
 @media print{
@@ -331,6 +340,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--gm
   .wx-table th{font-size:11px!important}
   .wx-table td.wx-day{font-size:12px!important}
   .wx-m-hide{display:table-cell!important}
+  .wx-cond-in svg{width:44px;height:41px}
+  .wx-soilnow{font-size:10.5px;margin-bottom:4px}
+  .wx-foot{font-size:10px;margin-top:6px}
 }
 </style>
 </head>
@@ -9694,6 +9706,10 @@ const WX={
     {id:'KNAI4', network:'ISUSM',   name:'Kanawha (ISU research farm)'},
     {id:'FXY',   network:'IA_ASOS', name:'Forest City airport'},
   ],
+  // 4" soil temp: actual from ISU Soil Moisture Network, projected from ECMWF (6cm/18cm layers interpolated to 4")
+  soilStation:{id:'KNAI4', name:'Kanawha ISU station'},
+  soilColdF:50,                               // shade soil cells below this (ISU fall-NH3 guideline: 4" soil below 50°F)
+  soil:null, soilErr:null,
   data:null, used:[], failed:[], fetchedAt:0, loading:null, err:null,
   acc:null, accLoading:false, accErr:null,
 };
@@ -9716,6 +9732,68 @@ async function wxFetchModel(m){
   const r=await fetch('https://api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(15000)});
   if(!r.ok) throw new Error(m.name+': HTTP '+r.status);
   return {model:m,daily:(await r.json()).daily};
+}
+// Projected 4" soil temp per day: equal blend of
+//   ECMWF — hourly 6cm & 18cm layers, linearly interpolated to 4" (10.2 cm)
+//   GFS   — hourly 0–10cm layer (the same field ISU's soil forecast maps use)
+// Each model is averaged per day first; a day one model doesn't cover uses the other alone.
+const WX_SOIL_MODELS=[
+  {name:'ECMWF',id:'ecmwf_ifs025',vars:['soil_temperature_6cm','soil_temperature_18cm'],
+    val:(h,i)=>{const a=h.soil_temperature_6cm[i],b=h.soil_temperature_18cm[i],w=(10.16-6)/12;return a==null||b==null?null:a*(1-w)+b*w;}},
+  {name:'GFS',id:'gfs_seamless',vars:['soil_temperature_0_to_10cm'],
+    val:(h,i)=>h.soil_temperature_0_to_10cm[i]},
+];
+async function wxFetchSoilModel(m){
+  const p=new URLSearchParams({latitude:WX.lat,longitude:WX.lon,hourly:m.vars.join(','),
+    temperature_unit:'fahrenheit',timezone:WX.tz,forecast_days:16,models:m.id});
+  const r=await fetch('https://api.open-meteo.com/v1/forecast?'+p,{signal:AbortSignal.timeout(15000)});
+  if(!r.ok)throw new Error(m.name+' soil: HTTP '+r.status);
+  const h=(await r.json()).hourly||{}; m.vars.forEach(v=>{h[v]=h[v]||[];});
+  const by={};
+  (h.time||[]).forEach((t,i)=>{
+    const v=m.val(h,i); if(v==null)return;
+    const k=t.slice(0,10), o=by[k]||(by[k]={s:0,n:0,min:v,max:v});
+    o.s+=v;o.n++;o.min=Math.min(o.min,v);o.max=Math.max(o.max,v);
+  });
+  const out={};
+  for(const k in by)if(by[k].n>=18)out[k]={avg:by[k].s/by[k].n,min:by[k].min,max:by[k].max};
+  return out;
+}
+async function wxFetchSoilFc(){
+  const settled=await Promise.allSettled(WX_SOIL_MODELS.map(wxFetchSoilModel));
+  const ok=settled.map((s,i)=>s.status==='fulfilled'?{name:WX_SOIL_MODELS[i].name,days:s.value}:null).filter(Boolean);
+  if(!ok.length)throw new Error('no soil forecast models responded');
+  const out={}, dates=new Set(ok.flatMap(m=>Object.keys(m.days)));
+  dates.forEach(k=>{
+    const have=ok.filter(m=>m.days[k]); if(!have.length)return;
+    const mean=f=>have.reduce((s,m)=>s+m.days[k][f],0)/have.length;
+    out[k]={avg:mean('avg'),min:mean('min'),max:mean('max'),
+      parts:have.map(m=>`${m.name} ${Math.round(m.days[k].avg)}`)};
+  });
+  return out;
+}
+// Actual 4" soil temp: current reading + last few daily averages from the ISU Soil Moisture Network.
+async function wxFetchSoilObs(){
+  const st=WX.soilStation.id, today=wxTodayStr(), back=new Date((wxDayNum(today)-5)*864e5).toISOString().slice(0,10);
+  const next=new Date((wxDayNum(today)+1)*864e5).toISOString().slice(0,10);
+  const [cur,daily]=await Promise.allSettled([
+    fetch(`https://mesonet.agron.iastate.edu/api/1/currents.json?network=ISUSM&station=${st}`,{signal:AbortSignal.timeout(15000)}).then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))),
+    fetch(`https://mesonet.agron.iastate.edu/cgi-bin/request/isusm.py?station=${st}&mode=daily&vars=soil04t&vars=soil04tn&vars=soil04tx&sts=${back}T00:00Z&ets=${next}T00:00Z&format=comma&missing=M`,{signal:AbortSignal.timeout(15000)}).then(r=>r.ok?r.text():Promise.reject(new Error('HTTP '+r.status))),
+  ]);
+  const o={now:null,nowAt:null,days:[]};
+  if(cur.status==='fulfilled'){
+    const row=(cur.value.data||[])[0];
+    if(row&&row.c1tmpf!=null){o.now=row.c1tmpf;o.nowAt=row.local_valid;}
+  }
+  if(daily.status==='fulfilled'){
+    const num=s=>{const v=parseFloat(s);return Number.isFinite(v)?v:null;};
+    daily.value.trim().split(/\r?\n/).slice(1).forEach(line=>{
+      const c=line.split(','); const avg=num(c[2]);
+      if(c[1]&&avg!=null)o.days.push({date:c[1],avg,min:num(c[3]),max:num(c[4])});
+    });
+  }
+  if(o.now==null&&!o.days.length)throw new Error('no soil readings from '+st);
+  return o;
 }
 // Weighted average across models; models with no value that day are skipped.
 function wxBlend(res,field,i){
@@ -9799,12 +9877,18 @@ function wxLoad(force){
   if(!force&&WX.data&&Date.now()-WX.fetchedAt<30*60e3)return Promise.resolve(WX.data);
   WX.loading=(async()=>{
     try{
+      const soilP=Promise.allSettled([wxFetchSoilFc(),wxFetchSoilObs()]);
       const settled=await Promise.allSettled(WX.models.map(wxFetchModel));
       const res=settled.filter(s=>s.status==='fulfilled').map(s=>s.value);
       WX.failed=settled.map((s,i)=>s.status==='rejected'?WX.models[i].name:null).filter(Boolean);
       if(!res.length)throw new Error('no forecast models responded');
       const days=wxBuildDays(res);
       if(!days.length)throw new Error('forecast came back empty');
+      // Soil is a bonus: if it fails, the forecast still shows (column reads "-").
+      const[sf,so]=await soilP, fc=sf.status==='fulfilled'?sf.value:{};
+      WX.soil=so.status==='fulfilled'?so.value:null;
+      WX.soilErr=sf.status==='rejected'&&so.status==='rejected'?'soil temps unavailable':null;
+      days.forEach(d=>{const s=fc[d.date];d.soil=s?Math.round(s.avg):null;d.soilRange=s?`${Math.round(s.min)}–${Math.round(s.max)}`:'';d.soilParts=s?s.parts.join(", "):'';});
       WX.data=days; WX.used=res.map(r=>r.model.name); WX.fetchedAt=Date.now(); WX.err=null;
     }catch(e){WX.err=e.message||String(e);}
     finally{WX.loading=null;}
@@ -9826,11 +9910,11 @@ function wxThreshText(){
   return `Threshold: ${p.join(', ')||'none'} · Highlight: precip chance ≥ ${WX.highlightPop}% · GDD base ${WX.gdd.base}/${WX.gdd.cap}`;
 }
 function wxTableHtml(days){
-  const W=(pct,hide)=>`style="width:${pct}%"${hide?' class="wx-m-hide"':''}`;
-  const head=`<thead><tr><th ${W(7.5)}>Day</th><th ${W(21.5)}>Weather Conditions</th><th ${W(7.1)}>High /<br>Low<br>(°F)</th>
-    <th ${W(7.1,1)}>Feels<br>like<br>(°F)</th><th ${W(7.1)}>Wind<br>(mph)</th><th ${W(7.1,1)}>Dew<br>Point<br>(°F)</th>
-    <th ${W(7.1,1)}>Humid<br>ity (%)</th><th ${W(7.1)}>Precip<br>Chanc<br>e (%)</th><th ${W(7.1)}>Precip<br>Liquid<br>(in.)</th>
-    <th ${W(7.1,1)}>Precip<br>Snow<br>(in.)</th><th ${W(7.1)}>GDD<br>(°F)</th><th ${W(7.1,1)}>Evap<br>in.</th></tr></thead>`;
+  const W=(pct,hide)=>`style="width:${pct}%"${hide?' class="wx-m-hide"':''}`, c=6.8;
+  const head=`<thead><tr><th ${W(7.5)}>Day</th><th ${W(17.7)}>Weather Conditions</th><th ${W(c)}>High /<br>Low<br>(°F)</th>
+    <th ${W(c,1)}>Feels<br>like<br>(°F)</th><th ${W(c)}>Wind<br>(mph)</th><th ${W(c,1)}>Dew<br>Point<br>(°F)</th>
+    <th ${W(c,1)}>Humid<br>ity (%)</th><th ${W(c)}>Precip<br>Chanc<br>e (%)</th><th ${W(c)}>Precip<br>Liquid<br>(in.)</th>
+    <th ${W(c,1)}>Precip<br>Snow<br>(in.)</th><th ${W(c)}>GDD<br>(°F)</th><th ${W(c)}>4" Soil<br>Temp<br>(°F)</th><th ${W(c,1)}>Evap<br>in.</th></tr></thead>`;
   const rows=days.map(d=>{
     const hl=d.pop>=WX.highlightPop?' hl':'', showPop=d.pop>=15||d.precip>=0.01;
     return `<tr title="Models: ${d.models.join(', ')}">
@@ -9845,9 +9929,22 @@ function wxTableHtml(days){
       <td class="${hl}"><span>${d.precip.toFixed(2)}</span></td>
       <td class="wx-m-hide">${d.snow>=0.05?d.snow.toFixed(1):'-'}</td>
       <td>${d.gdd.toFixed(1)}</td>
+      <td class="${d.soil!=null&&d.soil<WX.soilColdF?'soil-cold':''}" title="${d.soilRange?'Daily range '+d.soilRange+'°F · '+d.soilParts:''}"><span>${d.soil==null?'-':d.soil}</span></td>
       <td class="wx-m-hide">${d.et==null?'-':d.et.toFixed(2)}</td></tr>`;
   }).join('');
   return `<table class="wx-table">${head}<tbody>${rows}</tbody></table>`;
+}
+// "Actual" 4" soil line shown above the table (and printed).
+function wxSoilNowHtml(){
+  const s=WX.soil; if(!s)return WX.data?`<div class="wx-soilnow">4" soil temperature: ${WX.soilErr?'not available right now':'no reading from the ISU station right now'}.</div>`:'';
+  const p=[], r=v=>Math.round(v);
+  if(s.now!=null){
+    const t=s.nowAt?new Date(s.nowAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'';
+    p.push(`now <b>${r(s.now)}°F</b>${t?' ('+t+')':''}`);
+  }
+  const past=s.days.slice(-4).reverse();
+  if(past.length)p.push('daily avg '+past.map(d=>`${wxMD(d.date)} <b>${r(d.avg)}°</b>${d.min!=null&&d.max!=null?` (${r(d.min)}–${r(d.max)})`:''}`).join(' · '));
+  return `<div class="wx-soilnow">4" soil temp, actual — ${WX.soilStation.name}: ${p.join(' · ')}</div>`;
 }
 function renderWeather(){
   const el=document.getElementById('wx-main'); if(!el)return;
@@ -9869,9 +9966,10 @@ function renderWeather(){
     <div class="content">
       <div class="wx-sheet">
         <div class="wx-top"><span>${stamp}</span><span class="c">Local Forecast - ${WX.place} (${WX.lat.toFixed(4)}, ${WX.lon.toFixed(4)})</span><span style="width:80px"></span></div>
-        <div class="wx-titlebar"><h2>15 DAY FORECAST</h2><div class="wx-legend"><i></i>Exceeds Threshold</div></div>
+        <div class="wx-titlebar"><h2>15 DAY FORECAST</h2><div class="wx-legend"><i></i>Exceeds Threshold<span class="sb"></span>Soil &lt; ${WX.soilColdF}°F</div></div>
+        ${wxSoilNowHtml()}
         <div class="table-scroll">${body}</div>
-        <div class="wx-foot"><span>Blend of ${(WX.used.length?WX.used:WX.models.map(m=>m.name)).join(', ')} · via Open-Meteo</span><span>${wxThreshText()}</span></div>
+        <div class="wx-foot"><span>Blend of ${(WX.used.length?WX.used:WX.models.map(m=>m.name)).join(', ')} · via Open-Meteo · 4" soil: daily avg projected by ECMWF + GFS blend, actual from ISU Soil Moisture Network</span><span>${wxThreshText()}</span></div>
       </div>
       ${wxAccHtml()}
     </div>`;
@@ -9886,7 +9984,7 @@ function renderWxStrip(){
     return;
   }
   el.innerHTML=`<div class="card" style="padding:12px 14px">
-    <div class="ch" style="margin-bottom:8px"><div class="ct">🌦️ Weather — next 7 days</div>
+    <div class="ch" style="margin-bottom:8px"><div class="ct">🌦️ Weather — next 7 days${WX.soil&&WX.soil.now!=null?` <span style="font-weight:400;font-size:12px;color:var(--g700)">· 4" soil now ${Math.round(WX.soil.now)}°F</span>`:''}</div>
       <span style="font-size:12px;color:var(--gm);cursor:pointer;font-weight:600;white-space:nowrap" onclick="bnNav('weather',null)">15-day forecast →</span></div>
     <div class="wx-strip">${WX.data.slice(0,7).map(d=>`
       <div class="wx-sd${d.flags.length?' flag':''}" onclick="bnNav('weather',null)" title="${d.cond.text}${d.flags.length?' — '+d.flags.map(f=>f.long).join('; '):''}">
