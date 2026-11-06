@@ -1310,6 +1310,7 @@ const DEFAULTS = {
   products:[],
   inputPlans:[],
   chemRebates:[],
+  chemPrograms:[],
   chemLabels:{},
   inventory:[],
   profitWatch:{corn:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyComm:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyNgmo:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''},soyRenwick:{targetType:'margin',targetVal:0,basis:0,enabled:true,notes:''}},
@@ -1412,7 +1413,7 @@ let _appLoaded=false;     // true after first cloud load — prevents token-refr
    edits write straight through into S.years. Shared-across-years data (appPlans —
    already keyed field_year, contracts — already carry .year, loans, equipment,
    glCodes, appCategories) stays at the top level. */
-const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm','chemRebates'];
+const PER_YEAR_KEYS=['settings','fields','budgets','overhead','products','inputPlans','inventory','cropTracker','profitWatch','mtm','chemRebates','chemPrograms'];
 let _preMigrationBackupDone=false;
 
 // Fresh, self-contained per-year skeleton. Pure — does not read S.
@@ -1421,7 +1422,7 @@ function blankYearRaw(yr,farmName){
   s.year=String(yr); s._setupComplete=true;
   if(farmName) s.farmName=farmName;
   return {
-    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[], chemRebates:[],
+    settings:s, fields:[], budgets:[], overhead:[], products:[], inputPlans:[], inventory:[], chemRebates:[], chemPrograms:[],
     cropTracker:{plantDates:{},weatherLog:[],sprayLog:{}},
     profitWatch:JSON.parse(JSON.stringify(DEFAULTS.profitWatch)),
     mtm:JSON.parse(JSON.stringify(DEFAULTS.mtm))
@@ -1513,6 +1514,7 @@ function mergeDefaults(loaded,skipBackup){
     if(!y.inputPlans) y.inputPlans=[];
     if(!y.inventory) y.inventory=[];
     if(!y.chemRebates) y.chemRebates=[];
+    if(!y.chemPrograms) y.chemPrograms=[];
     if(!y.cropTracker) y.cropTracker={plantDates:{},weatherLog:[],sprayLog:{}};
     if(!y.cropTracker.plantDates) y.cropTracker.plantDates={};
     if(!y.cropTracker.weatherLog) y.cropTracker.weatherLog=[];
@@ -6221,9 +6223,11 @@ function renderInputsPage(){
   if(!tbr||!cont)return;
   if(!window._inputsTab) window._inputsTab='registry';
   const cur=window._inputsTab;
-  const tabs=[['registry','Registry'],['plans','Plan Builder'],['summary','Purchase Summary'],['inventory','Inventory']];
+  const tabs=[['registry','Registry'],['programs','Programs'],['summary','Purchase Summary'],['inventory','Inventory']];
+  if((S.inputPlans||[]).length||cur==='plans') tabs.push(['plans','Old plan builder']);
   tbr.innerHTML=tabs.map(([k,l])=>`<button class="btn ${cur===k?'btn-p':'btn-o'}" onclick="window._inputsTab='${k}';renderInputsPage()">${l}</button>`).join('');
   if(cur==='registry') renderInputsRegistry(cont);
+  else if(cur==='programs') renderInputsPrograms(cont);
   else if(cur==='plans') renderInputsPlans(cont);
   else if(cur==='summary') renderInputsSummary(cont);
   else if(cur==='inventory') renderInputsInventory(cont);
@@ -6272,6 +6276,8 @@ const KNOWN_LABELS=[
 const chemNorm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
 const chemEsc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const isChemType=t=>CHEM_TYPES.includes(t);
+// Dry formulations by name: DF (dry flowable), WDG/WG/DG (granules), SG, WP/WSP, "Dry" — sold by the lb, rates in dry oz.
+const chemLooksDry=name=>/(\d|\b)(DF|WDG|WG|DG|SG|WSP|WP|DRY)\b/i.test(String(name||''));
 function chemLabel(name){return (S.chemLabels||{})[chemNorm(name)]||null;}
 function chemGroup(active){return ACTIVE_GROUPS[chemNorm(active)]||'';}
 
@@ -6374,7 +6380,11 @@ function renderInputsRegistry(cont){
       if(ai&&n.net>0)perLb=ai.length===1
         ? `<b>$${(n.net/ai[0].lb).toFixed(2)}</b><div style="font-size:10px;color:var(--g400)">per lb ${chemEsc(ai[0].name)}</div>`
         : `<b>$${(n.net/totAi).toFixed(2)}</b><div style="font-size:10px;color:var(--g400)">per lb total active</div>`;
-      else if(lbl&&!ai)perLb=`<span style="font-size:10px;color:var(--g400)" title="Price unit doesn't match a ${lbl.form} product">check unit</span>`;
+      else if(lbl&&!ai)perLb=lbl.form==='dry'&&!['LB','OZ','TON'].includes(String(p.unit||'').toUpperCase())
+        ? `<span class="ie" style="font-size:10px;color:#b45309" title="Dry products are sold by the lb" onclick="regEditSelect('${p.id}','unit','LB')">priced per ${chemEsc(String(p.unit||'').toLowerCase())} — make it per LB</span>`
+        : `<span style="font-size:10px;color:var(--g400)" title="Price unit doesn't match a ${lbl.form} product">check unit</span>`;
+      else if(!lbl&&chemLooksDry(p.name)&&!['LB','OZ','TON'].includes(String(p.unit||'').toUpperCase()))
+        perLb=`<span class="ie" style="font-size:10px;color:#b45309" title="DF, WG and similar are dry: sold by the lb, applied in dry oz" onclick="regEditSelect('${p.id}','unit','LB')">dry product priced per ${chemEsc(String(p.unit||'').toLowerCase())} — make it per LB</span>`;
     } else actCell=`<span class="ie" style="font-size:11px" onclick="regEditCell('${p.id}','ai',this)">${chemEsc(p.ai)||'—'}</span>`;
     const quoted=p.quoteDate?new Date(p.quoteDate+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'—';
     rows+=`<tr ${p.selected?'style="background:#f0fdf4"':''} id="reg-row-${p.id}">
@@ -6442,7 +6452,7 @@ function renderInputsRegistry(cont){
 /* ── Label info modal: actives & strength from the product label ── */
 function chemLabelModal(pid){
   const p=(S.products||[]).find(x=>x.id===pid); if(!p)return;
-  const cur=chemLabel(p.name)||{form:chemUnitAmount(p.unit,'dry')!=null&&chemUnitAmount(p.unit,'liquid')==null?'dry':'liquid',strength:'lbgal',density:'',actives:[]};
+  const cur=chemLabel(p.name)||{form:chemLooksDry(p.name)||(chemUnitAmount(p.unit,'dry')!=null&&chemUnitAmount(p.unit,'liquid')==null)?'dry':'liquid',strength:'lbgal',density:'',actives:[]};
   window._lblDraft={pid,name:p.name,form:cur.form,strength:cur.strength||'lbgal',density:cur.density||'',source:cur.source||'',
     actives:(cur.actives||[]).map(a=>({...a}))};
   if(!window._lblDraft.actives.length)window._lblDraft.actives.push({name:'',amt:'',group:''});
@@ -6526,11 +6536,12 @@ function chemTermsSave(pid){
 }
 
 /* ── Enter a quote: one vendor, one date, many lines (made for copying handwritten quotes) ── */
-function chemQuoteModal(){
+function chemQuoteModal(prefill){
   const vendors=[...new Set((S.products||[]).map(p=>p.vendor).filter(Boolean))].sort();
   window._qDraft={vendor:'',date:new Date().toLocaleDateString('en-CA'),prepay:'',early:'',
     lines:Array.from({length:5},()=>({name:'',type:'CHEM HERB',size:2.5,sizeUnit:'GAL',price:'',per:'GAL',use:true}))};
   window._qVendors=vendors;
+  if(typeof prefill==='string'&&prefill)chemQuoteSet(0,'name',prefill,true);
   chemQuoteRender();
 }
 function chemQuoteRender(){
@@ -6565,6 +6576,7 @@ function chemQuoteRender(){
 function chemQuoteSet(i,k,v,noRender){
   const l=window._qDraft.lines[i]; l[k]=v;
   if(k==='sizeUnit'&&l.per!=='container')l.per=v;
+  if(k==='name'&&chemLooksDry(v)&&l.sizeUnit==='GAL'){l.sizeUnit='LB';if(l.per!=='container')l.per='LB';}
   if(k==='name'){const ex=(S.products||[]).find(p=>chemNorm(p.name)===chemNorm(v));if(ex){l.type=ex.type||l.type;if(ex.container){l.size=ex.container;l.sizeUnit=ex.containerUnit||ex.unit||l.sizeUnit;l.per=l.per==='container'?'container':l.sizeUnit;}}}
   if(!noRender)chemQuoteRender();
 }
@@ -6760,11 +6772,14 @@ function regImportFromAppPlans(){
     (fieldPlan||[]).forEach(li=>{
       const key=(li.product+'|'+li.vendor).toUpperCase();
       if(!existing.has(key)&&li.product&&li.vendor&&li.costPerUnit>0){
+        // Dry products (DF, WG… or 16 oz per priced unit) are sold by the lb, whatever the plan's UOM says.
+        let unit=(li.uom||'OZ').toUpperCase();
+        if(isChemType(li.category)&&unit==='GAL'&&(chemLooksDry(li.product)||+li.purchUnit===16))unit='LB';
         S.products.push({
           id:'p'+Date.now()+Math.random().toString(36).slice(2,6),
           name:li.product, type:li.category||'OTHER',
           vendor:li.vendor, price:li.costPerUnit,
-          unit:(li.uom||'OZ').toUpperCase(),
+          unit,
           purchUnit:li.purchUnit||128,
           season:yr, ai:'', notes:'', selected:true,
         });
@@ -7090,6 +7105,496 @@ function ipDeleteLine(planId,lineId){
   const plan=(S.inputPlans||[]).find(p=>p.id===planId); if(!plan) return;
   plan.items=(plan.items||[]).filter(i=>i.id!==lineId);
   save(); renderInputsPage();
+}
+
+/* ════════════════════════════════════════════════════
+   CHEM PROGRAMS — reusable spray programs per enterprise (per crop year: S.chemPrograms)
+   program = {id,name,ent,notes,
+     passes:[{id,name,lines:[{id,product,rate,ru,quoteId}]}],
+     exceptions:[{id,fieldIds:[],kind:'add'|'remove'|'swap',pass,target,product,rate,ru}]}
+   Programs are a sandbox: nothing here touches field application plans.
+════════════════════════════════════════════════════ */
+const CHEM_ENTS=[
+  {k:'corn',name:'Corn',crops:['corn']},
+  {k:'e3',name:'E3 soybeans',crops:['soy-commercial','soy-renwick'],sub:'incl. Renwick'},
+  {k:'ngmo',name:'Non-GMO soybeans',crops:['soy-nongmo']},
+];
+const CHEM_SPRAY_PASSES=['Pre-Emerge Spray Pass','Pre-Emerge Spray Pass 2','Post-Emerge Spray Pass','Post-Emerge Spray Pass 2','Fungicide Pass','Planting Pass','32 Spray Pass'];
+const CHEM_RU_BASE={liquid:{'fl oz':1/128,pt:1/8,qt:1/4,gal:1},dry:{oz:1/16,lb:1}};
+const CHEM_POUR_STEP={'fl oz':.25,oz:.25,pt:.05,qt:.05,gal:.01,lb:.01};
+const cpMoney=(n,d=2)=>'$'+(+n||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const cpAc=n=>(+n||0).toLocaleString('en-US',{maximumFractionDigits:1});
+const cpNum=n=>{const v=Math.round((+n||0)*100)/100;return String(v);};
+function cpEnt(k){return CHEM_ENTS.find(e=>e.k===k)||CHEM_ENTS[0];}
+function cpEntFields(k){const e=cpEnt(k);return (S.fields||[]).filter(f=>e.crops.includes(f.crop));}
+function cpEntAcres(k){return cpEntFields(k).reduce((s,f)=>s+(+f.acres||0),0);}
+function cpProgFields(prog){if(Array.isArray(prog.fieldIds)){const ids=new Set(prog.fieldIds.map(String));return (S.fields||[]).filter(f=>ids.has(String(f.id)));}return cpEntFields(prog.ent);}
+function cpNewId(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function cpProg(){return (S.chemPrograms||[]).find(p=>p.id===window._cpCur)||null;}
+function cpQuotes(name){const n=chemNorm(name);return n?(S.products||[]).filter(p=>chemNorm(p.name)===n):[];}
+// The quote a line is priced from: the one picked on the line, else the ✓ selected quote, else the cheapest net.
+function cpQuote(line){
+  const qs=cpQuotes(line.product); if(!qs.length)return null;
+  return qs.find(q=>q.id===line.quoteId)||qs.find(q=>q.selected)||[...qs].sort((a,b)=>chemNet(a).net-chemNet(b).net)[0];
+}
+function cpForm(name,q){
+  const l=chemLabel(name); if(l&&l.form)return l.form;
+  const u=String((q||cpQuotes(name)[0]||{}).unit||'').toUpperCase();
+  return (u==='LB'||u==='TON'||chemLooksDry(name))?'dry':'liquid';
+}
+function cpDefaultRu(name,q){
+  const f=cpForm(name,q), n=q?chemRateUnitName(q):'';
+  return CHEM_RU_BASE[f][n]!=null?n:(f==='dry'?'oz':'fl oz');
+}
+function cpPour(x,ru){const s=CHEM_POUR_STEP[ru]||.01;return Math.max(s,Math.round(x/s)*s);}
+// Price one line: $/ac at the net price, and lb of each active per acre.
+function cpPriceLine(line){
+  const q=cpQuote(line), form=cpForm(line.product,q);
+  const ru=CHEM_RU_BASE[form][line.ru]!=null?line.ru:cpDefaultRu(line.product,q);
+  const base=(+line.rate||0)*CHEM_RU_BASE[form][ru];          // gal (liquid) or lb (dry) per acre
+  const out={q,form,ru,base,cpa:0,net:0,ai:[],warn:''};
+  if(q){
+    out.net=chemNet(q).net;
+    const amt=chemUnitAmount(q.unit,form);
+    if(amt)out.cpa=base/amt*out.net;
+    else{out.cpa=(+line.rate||0)/(+q.purchUnit||1)*out.net;out.warn=`priced per ${String(q.unit||'?').toLowerCase()} — check the unit in the Registry`;}
+  } else if(String(line.product||'').trim()) out.warn='no quote yet';
+  const per=chemAiPerUnit(chemLabel(line.product),form==='dry'?'LB':'GAL');
+  if(per)out.ai=per.map(a=>({name:a.name,group:a.group,lb:a.lb*base}));
+  return out;
+}
+function cpAllLines(prog){const out=[];(prog.passes||[]).forEach(ps=>(ps.lines||[]).forEach(l=>out.push({...l,pass:ps.name})));return out;}
+// A field's lines once its exceptions are applied.
+function cpFieldLines(prog,fid){
+  let lines=cpAllLines(prog);
+  (prog.exceptions||[]).filter(x=>(x.fieldIds||[]).map(String).includes(String(fid))).forEach(x=>{
+    const t=chemNorm(x.target), hit=l=>chemNorm(l.product)===t&&(!x.pass||l.pass===x.pass);
+    if(x.kind==='remove')lines=lines.filter(l=>!hit(l));
+    else if(x.kind==='swap')lines=lines.map(l=>hit(l)?{...l,product:x.product,rate:x.rate,ru:x.ru,quoteId:'',exc:x.id}:l);
+    else if(x.kind==='add')lines.push({id:x.id,product:x.product,rate:x.rate,ru:x.ru,pass:x.pass||CHEM_SPRAY_PASSES[2],exc:x.id});
+  });
+  return lines;
+}
+function cpLinesCpa(lines){return lines.reduce((s,l)=>s+cpPriceLine(l).cpa,0);}
+function cpTotals(prog){
+  const base=cpAllLines(prog), baseCpa=cpLinesCpa(base), fields=cpProgFields(prog);
+  let total=0,acres=0;
+  fields.forEach(f=>{const a=+f.acres||0;acres+=a;total+=a*cpLinesCpa(cpFieldLines(prog,f.id));});
+  const groups=new Set(), actives={};
+  base.forEach(l=>cpPriceLine(l).ai.forEach(a=>{if(a.group)groups.add(a.group);actives[a.name]=(actives[a.name]||0)+a.lb;}));
+  return {baseCpa,total,acres,avgCpa:acres?total/acres:baseCpa,
+    passes:(prog.passes||[]).filter(ps=>(ps.lines||[]).some(l=>String(l.product||'').trim())).length,
+    groups:[...groups].sort(),actives,
+    missing:base.filter(l=>String(l.product||'').trim()&&!cpQuote(l)).length};
+}
+function cpGroupBadge(g){
+  if(!g)return'';
+  const c=g[0]==='F'?'bg':g[0]==='I'?'ba':'bb';
+  return `<span class="b ${c}" style="font-size:9px;padding:0 4px">${chemEsc(g)}</span>`;
+}
+function cpChemNames(){
+  const seen=new Map();
+  (S.products||[]).filter(p=>isChemType(p.type)).forEach(p=>{const n=chemNorm(p.name);if(!seen.has(n))seen.set(n,p.name);});
+  return [...seen.values()].sort((a,b)=>a.localeCompare(b));
+}
+function cpMsg(t){window._regMsg=t;}
+
+function renderInputsPrograms(cont){
+  if(!S.chemPrograms)S.chemPrograms=[];
+  const prog=cpProg();
+  const msg=window._regMsg; window._regMsg='';
+  const head=`${msg?`<div class="alert alert-info" style="margin-bottom:10px">${msg}</div>`:''}
+    <datalist id="cp-prods">${cpChemNames().map(n=>`<option value="${chemEsc(n)}">`).join('')}</datalist>`;
+  if(prog){cont.innerHTML=head+cpEditorHtml(prog);return;}
+  if(window._cpChk)window._cpChk.ctx=null;   // the ⚖ pop-up from a program line doesn't carry over to the list page
+  const yr=S.settings?.year||'';
+  const entBlocks=CHEM_ENTS.map(e=>{
+    const progs=S.chemPrograms.filter(p=>p.ent===e.k);
+    const rows=progs.map(p=>{const t=cpTotals(p);
+      return `<tr>
+        <td><span class="ie" style="font-weight:600" onclick="window._cpCur='${p.id}';renderInputsPage()">${chemEsc(p.name)||'(no name)'}</span>
+          ${p.notes?`<div style="font-size:10px;color:var(--g400)">${chemEsc(p.notes)}</div>`:''}</td>
+        <td class="tr"><b>${cpMoney(t.baseCpa)}</b></td>
+        <td class="tc">${t.passes}</td>
+        <td>${t.groups.map(cpGroupBadge).join(' ')||'<span style="color:var(--g400)">—</span>'}</td>
+        <td class="tr">${cpMoney(t.total,0)}<div style="font-size:10px;color:var(--g400)">${cpAc(t.acres)} ac · ${cpProgFields(p).length} field${cpProgFields(p).length===1?'':'s'}${(p.exceptions||[]).length?` · ${p.exceptions.length} exception${p.exceptions.length===1?'':'s'}`:''}</div></td>
+        <td>${t.missing?`<span style="font-size:11px;color:#b45309">${t.missing} product${t.missing===1?'':'s'} without a quote</span>`:''}</td>
+        <td style="white-space:nowrap"><button class="btn btn-o btn-s" onclick="window._cpCur='${p.id}';renderInputsPage()">Open</button>
+          <button class="btn btn-o btn-s" onclick="cpCopy('${p.id}')">Copy</button>
+          <button class="btn btn-r btn-s" onclick="cpDelete('${p.id}')">✕</button></td></tr>`;}).join('');
+    const ac=cpEntAcres(e.k), nf=cpEntFields(e.k).length;
+    return `<div class="card">
+      <div class="ch"><div><div class="ct">${e.name}</div><div class="cs">${cpAc(ac)} ac · ${nf} field${nf===1?'':'s'}${e.sub?' · '+e.sub:''}</div></div>
+        <button class="btn btn-p btn-s" onclick="cpNewModal('${e.k}')">+ New ${e.name.toLowerCase().replace(' soybeans','')} program</button></div>
+      ${progs.length?`<div class="table-scroll"><table>
+        <thead><tr><th>Program</th><th class="tr">$/ac</th><th class="tc">Passes</th><th>Sites of action</th><th class="tr">Total on its fields</th><th></th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`
+      :`<div style="color:var(--g400);font-size:12px;padding:6px 0">No ${e.name.toLowerCase()} programs yet. Start one from scratch, or copy what a field already has planned.</div>`}
+    </div>`;}).join('');
+  cont.innerHTML=head+`
+    <div class="alert alert-info" style="margin-bottom:12px;font-size:12px">
+      Build a chemical program for each enterprise and try as many versions as you like. Prices come from the <b>net price</b> of each product's ✓ quote in the Registry.
+      Programs are a sandbox for ${chemEsc(yr)}. <b>Nothing here changes your field application plans</b> until a later step where you pick one and send it to the fields.
+    </div>
+    ${entBlocks}
+    <div class="card" id="cp-check-card">${cpCheckHtml(false)}</div>`;
+}
+
+function cpEditorHtml(prog){
+  const t=cpTotals(prog), e=cpEnt(prog.ent);
+  const passOpts=cur=>{const list=[...CHEM_SPRAY_PASSES];if(cur&&!list.includes(cur))list.unshift(cur);
+    return list.map(p=>`<option ${p===cur?'selected':''}>${chemEsc(p)}</option>`).join('')+`<option value="__custom">Other name…</option>`;};
+  const passes=(prog.passes||[]).map((ps,pi)=>{
+    let passCpa=0;
+    const rows=(ps.lines||[]).map((l,li)=>{
+      const pr=cpPriceLine(l); passCpa+=pr.cpa;
+      const qs=cpQuotes(l.product), lbl=chemLabel(l.product);
+      const ruOpts=Object.keys(CHEM_RU_BASE[pr.form]).map(u=>`<option ${u===pr.ru?'selected':''}>${u}</option>`).join('');
+      const qSel=qs.length?`<select class="fi" style="font-size:11px;padding:2px 4px;max-width:190px" onchange="cpSetLine(${pi},${li},'quoteId',this.value)">
+          ${qs.map(q=>`<option value="${q.id}" ${pr.q&&pr.q.id===q.id?'selected':''}>${chemEsc(q.vendor||'?')}${q.container?' · '+(+q.container)+' '+chemEsc(String(q.containerUnit||q.unit||'').toLowerCase()):''}${q.selected?' ✓':''}</option>`).join('')}</select>`
+        :(String(l.product||'').trim()?`<span class="ie" style="font-size:11px;color:#b45309" onclick="chemQuoteModal(${chemEsc(JSON.stringify(l.product))})">＋ enter a quote</span>`:'');
+      const ai=pr.ai.length?pr.ai.map(a=>`${chemEsc(a.name)} <b>${a.lb.toFixed(3)}</b> ${cpGroupBadge(a.group)}`).join('<br>')
+        :(pr.q&&isChemType(pr.q.type)?`<span class="ie" style="font-size:11px;color:#b45309" onclick="chemLabelModal('${pr.q.id}')">＋ label info</span>`:'');
+      const premix=lbl&&(lbl.actives||[]).length>1;
+      return `<tr>
+        <td><input class="fi" list="cp-prods" value="${chemEsc(l.product)}" placeholder="Product" style="width:190px" onchange="cpSetLine(${pi},${li},'product',this.value)"></td>
+        <td style="white-space:nowrap"><input class="fi" type="number" step="any" min="0" value="${l.rate===''||l.rate==null?'':+l.rate}" style="width:62px;text-align:right" onchange="cpSetLine(${pi},${li},'rate',this.value)">
+          <select class="fi" style="font-size:11px;padding:2px 2px;width:56px" onchange="cpSetLine(${pi},${li},'ru',this.value)">${ruOpts}</select></td>
+        <td>${qSel}</td>
+        <td class="tr" style="white-space:nowrap">${pr.q?`${cpMoney(pr.net)}<span style="font-size:10px;color:var(--g400)">/${chemEsc(String(pr.q.unit||'').toLowerCase())}</span>`:''}</td>
+        <td class="tr" style="white-space:nowrap"><b>${cpMoney(pr.cpa)}</b>${pr.warn?`<div style="font-size:10px;color:#b45309">${chemEsc(pr.warn)}</div>`:''}</td>
+        <td style="font-size:11px;min-width:150px">${ai}</td>
+        <td style="white-space:nowrap">${premix?`<button class="btn btn-o btn-s" title="Compare this premix to buying the actives separately" onclick="cpCheckFromLine(${pi},${li})">⚖ Tank mix?</button>`:''}
+          <button class="btn btn-r btn-s" onclick="cpDelLine(${pi},${li})">✕</button></td></tr>`;}).join('');
+    return `<div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <select class="fi" style="width:210px;font-weight:600" onchange="cpSetPass(${pi},this.value)">${passOpts(ps.name)}</select>
+        <span style="color:var(--gm);font-weight:600">${cpMoney(passCpa)}/ac</span>
+        <span style="flex:1"></span>
+        ${pi>0?`<button class="btn btn-o btn-s" title="Move up" onclick="cpMovePass(${pi},-1)">↑</button>`:''}
+        ${pi<prog.passes.length-1?`<button class="btn btn-o btn-s" title="Move down" onclick="cpMovePass(${pi},1)">↓</button>`:''}
+        <button class="btn btn-r btn-s" onclick="cpDelPass(${pi})">Remove pass</button>
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Product</th><th>Rate / ac</th><th>Quote</th><th class="tr">Net price</th><th class="tr">$/ac</th><th>Active lb/ac</th><th></th></tr></thead>
+        <tbody>${rows||`<tr><td colspan="7" style="color:var(--g400);text-align:center;padding:8px">No products in this pass yet</td></tr>`}</tbody></table></div>
+      <button class="btn btn-o btn-s" style="margin-top:5px" onclick="cpAddLine(${pi})">+ Add product</button>
+    </div>`;}).join('');
+  const actList=Object.entries(t.actives).sort((a,b)=>b[1]-a[1]).map(([n,lb])=>`${chemEsc(n)} ${lb.toFixed(3)} ${cpGroupBadge(chemGroup(n))}`).join(' · ');
+  return `
+    <div style="margin-bottom:10px"><button class="btn btn-o" onclick="window._cpCur='';renderInputsPage()">← All programs</button></div>
+    <div class="card">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+        <div><label class="fl">Program name</label><input class="fi" value="${chemEsc(prog.name)}" style="width:240px" onchange="cpSetProg('name',this.value)"></div>
+        <div><label class="fl">Enterprise</label><select class="fi" style="width:170px" onchange="cpSetProg('ent',this.value)">
+          ${CHEM_ENTS.map(x=>`<option value="${x.k}" ${x.k===prog.ent?'selected':''}>${x.name}</option>`).join('')}</select></div>
+        <div style="flex:1;min-width:200px"><label class="fl">Notes</label><input class="fi" value="${chemEsc(prog.notes||'')}" style="width:100%" placeholder="e.g. Option A — residual heavy" onchange="cpSetProg('notes',this.value)"></div>
+      </div>
+      ${cpFieldPickHtml(prog)}
+      <div class="mg" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px">
+        <div class="mc green"><div class="ml">Program cost</div><div class="mv">${cpMoney(t.baseCpa)}/ac</div><div class="ms">at net prices</div></div>
+        <div class="mc"><div class="ml">Spray passes</div><div class="mv">${t.passes}</div><div class="ms">trips across the field</div></div>
+        <div class="mc"><div class="ml">${cpProgFields(prog).length} fields · ${cpAc(t.acres)} ac</div><div class="mv">${cpMoney(t.total,0)}</div><div class="ms">${(prog.exceptions||[]).length?`avg ${cpMoney(t.avgCpa)}/ac with field exceptions`:'on the checked fields'}</div></div>
+        <div class="mc"><div class="ml">Sites of action</div><div class="mv">${t.groups.length}</div><div class="ms">${t.groups.map(cpGroupBadge).join(' ')||'add label info to see'}</div></div>
+      </div>
+      ${t.missing?`<div class="alert alert-warn" style="margin-bottom:10px;font-size:12px">${t.missing} product${t.missing===1?' has':'s have'} no quote yet, so ${t.missing===1?'it counts':'they count'} as $0. Click <b>＋ enter a quote</b> on the line.</div>`:''}
+      ${passes||'<div style="color:var(--g400);padding:8px 0">No passes yet.</div>'}
+      <button class="btn btn-o" onclick="cpAddPass()">+ Add a pass</button>
+      ${actList?`<div style="margin-top:14px;font-size:11px;color:var(--g600)"><b>Total active per acre (lb):</b> ${actList}</div>`:''}
+    </div>
+    ${cpExceptionsHtml(prog)}`;
+}
+
+// Check the fields this program goes on. Starts with the enterprise's fields; any field can be added or taken off.
+function cpFieldPickHtml(prog){
+  const on=new Set(cpProgFields(prog).map(f=>String(f.id)));
+  const groups=CHEM_ENTS.map(e=>({e,fields:cpEntFields(e.k)})).filter(g=>g.fields.length);
+  const known=new Set(CHEM_ENTS.flatMap(e=>e.crops));
+  const other=(S.fields||[]).filter(f=>!known.has(f.crop));
+  if(other.length)groups.push({e:{k:'',name:'Other'},fields:other});
+  return `<div style="border:1px solid var(--g200,#e5e7eb);border-radius:8px;padding:8px 10px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:4px">Fields this program goes on <span style="font-weight:400;color:var(--g400)">(${on.size} checked)</span></div>
+    ${groups.map(g=>{const all=g.fields.every(f=>on.has(String(f.id)));
+      return `<div style="display:flex;flex-wrap:wrap;gap:3px 14px;align-items:center;margin:3px 0">
+        <span style="font-size:11px;color:var(--g400);min-width:118px">${chemEsc(g.e.name)}${g.e.k?` <span class="ie" style="font-size:10px" onclick="cpPickGroup('${g.e.k}',${all?'false':'true'})">${all?'none':'all'}</span>`:''}</span>
+        ${g.fields.map(f=>`<label style="font-size:12px;white-space:nowrap;cursor:pointer"><input type="checkbox" ${on.has(String(f.id))?'checked':''} onchange="cpPickField('${f.id}',this.checked)">
+          ${chemEsc(f.name)} <span style="color:var(--g400)">${cpAc(f.acres)}</span></label>`).join('')}</div>`;}).join('')}
+  </div>`;
+}
+function cpPickField(id,checked){
+  const p=cpProg();if(!p)return;
+  const ids=new Set(cpProgFields(p).map(f=>String(f.id)));
+  if(checked)ids.add(String(id));else ids.delete(String(id));
+  p.fieldIds=[...ids];cpSave();
+}
+function cpPickGroup(k,checked){
+  const p=cpProg();if(!p)return;
+  const ids=new Set(cpProgFields(p).map(f=>String(f.id)));
+  cpEntFields(k).forEach(f=>checked?ids.add(String(f.id)):ids.delete(String(f.id)));
+  p.fieldIds=[...ids];cpSave();
+}
+
+function cpExceptionsHtml(prog){
+  const fields=cpProgFields(prog), byId=new Map(fields.map(f=>[String(f.id),f]));
+  const baseCpa=cpLinesCpa(cpAllLines(prog));
+  const desc=x=>{
+    const r=`${cpNum(x.rate)} ${chemEsc(x.ru||'')}`;
+    if(x.kind==='remove')return `Leave out <b>${chemEsc(x.target)}</b>${x.pass?` (${chemEsc(x.pass)})`:''}`;
+    if(x.kind==='swap')return `Use <b>${chemEsc(x.product)}</b> ${r} instead of <b>${chemEsc(x.target)}</b>${x.pass?` (${chemEsc(x.pass)})`:''}`;
+    return `Add <b>${chemEsc(x.product)}</b> ${r} in ${chemEsc(x.pass||'')}`;};
+  const rows=(prog.exceptions||[]).map(x=>{
+    const names=(x.fieldIds||[]).map(id=>byId.get(String(id))).filter(Boolean);
+    const diff=names.length?cpLinesCpa(cpFieldLines(prog,names[0].id))-baseCpa:0;
+    return `<tr><td>${names.map(f=>chemEsc(f.name)).join(', ')||'<span style="color:#b45309">no matching fields</span>'}</td>
+      <td>${desc(x)}</td>
+      <td class="tr" style="white-space:nowrap">${names.length?`${diff>=0?'+':'−'}${cpMoney(Math.abs(diff))}/ac`:''}</td>
+      <td><button class="btn btn-r btn-s" onclick="cpDelExc('${x.id}')">✕</button></td></tr>`;}).join('');
+  return `<div class="card">
+    <div class="ch"><div><div class="ct">Field exceptions</div><div class="cs">A product swapped, added or left out on specific ${chemEsc(cpEnt(prog.ent).name.toLowerCase())} fields</div></div>
+      <button class="btn btn-o btn-s" onclick="cpExcModal()">+ Add exception</button></div>
+    ${rows?`<div class="table-scroll"><table><thead><tr><th>Fields</th><th>Change</th><th class="tr">Cost vs program</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      :`<div style="color:var(--g400);font-size:12px">None. Every ${chemEsc(cpEnt(prog.ent).name.toLowerCase())} field gets the program as built.</div>`}
+  </div>`;
+}
+
+/* ── program edits ── */
+function cpSave(){save();renderInputsPage();}
+function cpSetProg(k,v){const p=cpProg();if(!p)return;p[k]=v;cpSave();}
+function cpNewModal(ent){
+  const fields=cpEntFields(ent).filter(f=>getFieldPlan(f.id).some(r=>isChemType(r.category)));
+  const others=(S.chemPrograms||[]);
+  openModal(`<div class="fg"><label class="fl">Program name</label><input class="fi" id="cpn-name" placeholder="e.g. ${chemEsc(cpEnt(ent).name)} — Option A"></div>
+    <div class="fg"><label class="fl">Start from</label><select class="fi" id="cpn-src">
+      <option value="">Blank program</option>
+      ${fields.length?`<optgroup label="What a field has planned now">${fields.map(f=>`<option value="f:${f.id}">${chemEsc(f.name)} (${cpAc(f.acres)} ac)</option>`).join('')}</optgroup>`:''}
+      ${others.length?`<optgroup label="Copy a program">${others.map(p=>`<option value="p:${p.id}">${chemEsc(p.name)}</option>`).join('')}</optgroup>`:''}
+    </select></div>
+    <div style="font-size:11px;color:var(--g400)">Starting from a field copies its herbicide, fungicide, insecticide and adjuvant lines. It doesn't change the field.</div>
+    <button class="btn btn-p" style="margin-top:10px" onclick="cpCreate('${ent}')">Create program</button>`,`New ${chemEsc(cpEnt(ent).name)} program`);
+}
+// Turn a field's planned chem lines into program passes. "(2nd)" products become the same product in a second pass.
+function cpFromField(fid){
+  const passes=[];const get=n=>{let p=passes.find(x=>x.name===n);if(!p){p={id:cpNewId('ps'),name:n,lines:[]};passes.push(p);}return p;};
+  getFieldPlan(fid).filter(r=>isChemType(r.category)||r.category==='WATER CONDITIONER').forEach(r=>{
+    let name=String(r.product||'').trim(), second=false;
+    const m=name.match(/^(.*?)\s*\((2nd|second)\)\s*$/i); if(m){name=m[1].trim();second=true;}
+    const qs=cpQuotes(name), q=qs.find(x=>chemNorm(x.vendor)===chemNorm(r.vendor))||null;
+    const form=cpForm(name,q), pu=+r.purchUnit||1;
+    const ru=({128:'fl oz',16:'oz',8:'pt',4:'qt'})[pu]||(form==='dry'?'lb':'gal');
+    let pass=r.pass||((r.category==='CHEM FUNG'||r.category==='CHEM INSECT')?'Fungicide Pass':'Pass not set');
+    if(second)pass=r.pass||'Second application';
+    get(pass).lines.push({id:cpNewId('l'),product:name,rate:+r.rate||0,ru:CHEM_RU_BASE[form][ru]!=null?ru:cpDefaultRu(name,q),quoteId:q?q.id:''});
+  });
+  const order=n=>{const i=APP_PASSES.indexOf(n);return i<0?99:i;};   // same order as the field plan page
+  return passes.sort((a,b)=>order(a.name)-order(b.name));
+}
+function cpCreate(ent){
+  const name=(document.getElementById('cpn-name').value||'').trim()||`${cpEnt(ent).name} program ${(S.chemPrograms||[]).filter(p=>p.ent===ent).length+1}`;
+  const src=document.getElementById('cpn-src').value;
+  let prog={id:cpNewId('cp'),name,ent,notes:'',passes:[],exceptions:[]};
+  if(src.startsWith('f:')){prog.passes=cpFromField(src.slice(2));
+    const f=(S.fields||[]).find(x=>String(x.id)===src.slice(2));prog.notes=f?`Started from ${f.name}'s plan`:'';}
+  else if(src.startsWith('p:')){const o=S.chemPrograms.find(p=>p.id===src.slice(2));
+    if(o){prog=cpClone(o);prog.name=name;prog.ent=ent;}}
+  if(!prog.passes.length)prog.passes=[{id:cpNewId('ps'),name:'Pre-Emerge Spray Pass',lines:[{id:cpNewId('l'),product:'',rate:'',ru:'fl oz'}]}];
+  if(!S.chemPrograms)S.chemPrograms=[];
+  S.chemPrograms.push(prog); window._cpCur=prog.id; closeModal(); cpSave();
+}
+function cpClone(o){
+  const c=JSON.parse(JSON.stringify(o));c.id=cpNewId('cp');
+  (c.passes||[]).forEach(ps=>{ps.id=cpNewId('ps');(ps.lines||[]).forEach(l=>l.id=cpNewId('l'));});
+  (c.exceptions||[]).forEach(x=>x.id=cpNewId('x'));
+  return c;
+}
+function cpCopy(id){const o=S.chemPrograms.find(p=>p.id===id);if(!o)return;
+  const c=cpClone(o);c.name=o.name+' (copy)';S.chemPrograms.splice(S.chemPrograms.indexOf(o)+1,0,c);window._cpCur=c.id;cpSave();}
+function cpDelete(id){const o=S.chemPrograms.find(p=>p.id===id);if(!o||!confirm(`Delete the program "${o.name}"? Field plans aren't affected.`))return;
+  S.chemPrograms=S.chemPrograms.filter(p=>p.id!==id);cpSave();}
+function cpSetPass(pi,v){const p=cpProg();if(!p)return;
+  if(v==='__custom'){v=(prompt('Pass name:',p.passes[pi].name)||'').trim();if(!v){renderInputsPage();return;}}
+  p.passes[pi].name=v;cpSave();}
+function cpAddPass(){const p=cpProg();if(!p)return;
+  const used=new Set(p.passes.map(x=>x.name)), name=CHEM_SPRAY_PASSES.find(n=>!used.has(n))||'New pass';
+  p.passes.push({id:cpNewId('ps'),name,lines:[{id:cpNewId('l'),product:'',rate:'',ru:'fl oz'}]});cpSave();}
+function cpDelPass(pi){const p=cpProg();if(!p)return;const ps=p.passes[pi];
+  if((ps.lines||[]).some(l=>l.product)&&!confirm(`Remove ${ps.name} and its ${ps.lines.length} product${ps.lines.length===1?'':'s'}?`))return;
+  p.passes.splice(pi,1);cpSave();}
+function cpMovePass(pi,d){const p=cpProg();if(!p)return;const j=pi+d;if(j<0||j>=p.passes.length)return;
+  [p.passes[pi],p.passes[j]]=[p.passes[j],p.passes[pi]];cpSave();}
+function cpAddLine(pi){const p=cpProg();if(!p)return;p.passes[pi].lines.push({id:cpNewId('l'),product:'',rate:'',ru:'fl oz'});cpSave();}
+function cpDelLine(pi,li){const p=cpProg();if(!p)return;p.passes[pi].lines.splice(li,1);cpSave();}
+function cpSetLine(pi,li,k,v){
+  const p=cpProg();if(!p)return;const l=p.passes[pi].lines[li];if(!l)return;
+  if(k==='rate'){l.rate=v===''?'':(+v||0);}
+  else if(k==='product'){
+    const qs=cpQuotes(v);l.product=qs.length?qs[0].name:String(v).trim();l.quoteId='';
+    const q=cpQuote(l);l.ru=cpDefaultRu(l.product,q);
+  } else l[k]=v;
+  cpSave();
+}
+
+/* ── field exceptions ── */
+function cpExcModal(){
+  const p=cpProg();if(!p)return;
+  const fields=cpProgFields(p), prods=[...new Set(cpAllLines(p).map(l=>l.product).filter(Boolean))];
+  window._cpExc={kind:'swap',fieldIds:[],pass:'',target:prods[0]||'',product:'',rate:'',ru:''};
+  if(!fields.length){alert(`There are no ${cpEnt(p.ent).name.toLowerCase()} fields this year.`);return;}
+  cpExcRender();
+}
+function cpExcRender(){
+  const p=cpProg(), d=window._cpExc; if(!p||!d)return;
+  const fields=cpProgFields(p), prods=[...new Set(cpAllLines(p).map(l=>l.product).filter(Boolean))];
+  const form=cpForm(d.product), ru=CHEM_RU_BASE[form][d.ru]!=null?d.ru:cpDefaultRu(d.product,cpQuote({product:d.product}));
+  const passes=[...new Set([...p.passes.map(x=>x.name),...CHEM_SPRAY_PASSES])];
+  openModal(`
+    <div class="fg"><label class="fl">Fields</label><div style="display:flex;flex-wrap:wrap;gap:4px 14px;max-height:150px;overflow:auto">
+      ${fields.map(f=>`<label style="font-size:12px;white-space:nowrap"><input type="checkbox" ${d.fieldIds.includes(String(f.id))?'checked':''}
+        onchange="cpExcField('${f.id}',this.checked)"> ${chemEsc(f.name)} <span style="color:var(--g400)">${cpAc(f.acres)} ac</span></label>`).join('')}</div></div>
+    <div class="fr fr2">
+      <div class="fg"><label class="fl">Change</label><select class="fi" onchange="window._cpExc.kind=this.value;cpExcRender()">
+        <option value="swap" ${d.kind==='swap'?'selected':''}>Swap a product</option>
+        <option value="add" ${d.kind==='add'?'selected':''}>Add a product</option>
+        <option value="remove" ${d.kind==='remove'?'selected':''}>Leave a product out</option></select></div>
+      ${d.kind!=='add'?`<div class="fg"><label class="fl">Program product</label><select class="fi" onchange="window._cpExc.target=this.value">
+        ${prods.map(n=>`<option ${n===d.target?'selected':''}>${chemEsc(n)}</option>`).join('')}</select></div>`
+      :`<div class="fg"><label class="fl">In pass</label><select class="fi" onchange="window._cpExc.pass=this.value">
+        ${passes.map(n=>`<option ${n===(d.pass||passes[0])?'selected':''}>${chemEsc(n)}</option>`).join('')}</select></div>`}
+    </div>
+    ${d.kind!=='remove'?`<div class="fr fr2">
+      <div class="fg"><label class="fl">${d.kind==='swap'?'Use instead':'Product'}</label><input class="fi" list="cp-prods" value="${chemEsc(d.product)}" onchange="window._cpExc.product=this.value;window._cpExc.ru='';cpExcRender()"></div>
+      <div class="fg"><label class="fl">Rate / ac</label><div style="display:flex;gap:4px"><input class="fi" type="number" step="any" min="0" value="${chemEsc(d.rate)}" onchange="window._cpExc.rate=this.value" style="width:90px">
+        <select class="fi" style="width:70px" onchange="window._cpExc.ru=this.value">${Object.keys(CHEM_RU_BASE[form]).map(u=>`<option ${u===ru?'selected':''}>${u}</option>`).join('')}</select></div></div>
+    </div>`:''}
+    <button class="btn btn-p" style="margin-top:10px" onclick="cpExcSave()">Save exception</button>`,'Field exception');
+}
+function cpExcField(id,on){const d=window._cpExc;id=String(id);d.fieldIds=d.fieldIds.filter(x=>x!==id);if(on)d.fieldIds.push(id);}
+function cpExcSave(){
+  const p=cpProg(), d=window._cpExc; if(!p||!d)return;
+  if(!d.fieldIds.length){alert('Pick at least one field.');return;}
+  if(d.kind!=='add'&&!d.target){alert('Pick the program product this changes.');return;}
+  if(d.kind!=='remove'&&(!String(d.product).trim()||!(+d.rate>0))){alert('Enter the product and its rate.');return;}
+  const product=d.kind==='remove'?'':(cpQuotes(d.product)[0]?.name||String(d.product).trim());
+  const form=cpForm(product), ru=CHEM_RU_BASE[form][d.ru]!=null?d.ru:cpDefaultRu(product,cpQuote({product}));
+  const passes=[...new Set([...p.passes.map(x=>x.name),...CHEM_SPRAY_PASSES])];
+  if(!p.exceptions)p.exceptions=[];
+  p.exceptions.push({id:cpNewId('x'),fieldIds:[...d.fieldIds],kind:d.kind,target:d.kind==='add'?'':d.target,
+    pass:d.kind==='add'?(d.pass||passes[0]):'',product,rate:d.kind==='remove'?0:+d.rate,ru:d.kind==='remove'?'':ru});
+  closeModal();cpSave();
+}
+function cpDelExc(id){const p=cpProg();if(!p)return;p.exceptions=(p.exceptions||[]).filter(x=>x.id!==id);cpSave();}
+
+/* ── Premix vs tank mix: price the same pounds of active from single-active products ── */
+function cpChk(){if(!window._cpChk)window._cpChk={product:'',rate:'',ru:'',ent:'',ctx:null};return window._cpChk;}
+function cpCheckFromLine(pi,li){
+  const p=cpProg();if(!p)return;const l=p.passes[pi].lines[li];
+  window._cpChk={product:l.product,rate:l.rate,ru:cpPriceLine(l).ru,ent:p.ent,ctx:{prog:p.id,pi,li}};
+  cpCheckRender();
+}
+function cpCheckRender(){
+  const c=cpChk();
+  if(c.ctx){openModal(cpCheckHtml(true),'Premix vs tank mix',true);return;}
+  const el=document.getElementById('cp-check-card'); if(el)el.innerHTML=cpCheckHtml(false);
+}
+function cpCheckSet(k,v){const c=cpChk();c[k]=v;if(k==='product'){c.ru='';}cpCheckRender();}
+// For each active: the cheapest way to get the same lb from a single-active product, at a pourable rate.
+function cpCheckCalc(){
+  const c=cpChk(); if(!c.product||!(+c.rate>0))return null;
+  const pl=cpPriceLine({product:c.product,rate:+c.rate,ru:c.ru||cpDefaultRu(c.product,cpQuote({product:c.product}))});
+  if(!pl.ai.length)return {pl,need:[],singles:[],same:[]};
+  const need=pl.ai.filter(a=>a.lb>0);
+  const lib=cpChemNames().filter(n=>chemNorm(n)!==chemNorm(c.product)&&chemLabel(n));
+  const option=(name,perBase,lbNeeded)=>{
+    const q=cpQuote({product:name}), form=cpForm(name,q), ru=cpDefaultRu(name,q);
+    const exact=lbNeeded/perBase/CHEM_RU_BASE[form][ru], pour=cpPour(exact,ru);
+    const pr=cpPriceLine({product:name,rate:pour,ru});
+    return {name,q,ru,exact,pour,cpa:pr.cpa,priced:!!q&&!pr.warn,warn:pr.warn};
+  };
+  const singles=need.map(a=>{
+    const opts=lib.map(n=>{const l=chemLabel(n);if((l.actives||[]).length!==1||chemNorm(l.actives[0].name)!==chemNorm(a.name))return null;
+      const per=chemAiPerUnit(l,l.form==='dry'?'LB':'GAL');return per&&per[0].lb>0?option(n,per[0].lb,a.lb):null;})
+      .filter(Boolean).sort((x,y)=>(y.priced-x.priced)||(x.cpa-y.cpa));
+    return {active:a,opts};
+  });
+  const want=new Set(need.map(a=>chemNorm(a.name)));
+  const same=lib.map(n=>{const l=chemLabel(n), acts=(l.actives||[]).map(a=>chemNorm(a.name));
+      if(acts.length!==want.size||!acts.every(x=>want.has(x)))return null;
+      const per=chemAiPerUnit(l,l.form==='dry'?'LB':'GAL');if(!per)return null;
+      // enough product to meet every active (ratios can differ between brands)
+      const q=cpQuote({product:n}),form=cpForm(n,q),ru=cpDefaultRu(n,q);
+      const exact=Math.max(...need.map(a=>{const x=per.find(p=>chemNorm(p.name)===chemNorm(a.name));return x&&x.lb>0?a.lb/x.lb:Infinity;}))/CHEM_RU_BASE[form][ru];
+      if(!isFinite(exact))return null;
+      const pour=cpPour(exact,ru), pr=cpPriceLine({product:n,rate:pour,ru});
+      return {name:n,q,ru,exact,pour,cpa:pr.cpa,priced:!!q&&!pr.warn,warn:pr.warn};})
+    .filter(Boolean).sort((x,y)=>(y.priced-x.priced)||(x.cpa-y.cpa));
+  return {pl,need,singles,same};
+}
+function cpCheckHtml(inModal){
+  const c=cpChk();
+  const labeled=cpChemNames().filter(n=>{const l=chemLabel(n);return l&&(l.actives||[]).length;});
+  const premixes=labeled.filter(n=>chemLabel(n).actives.length>1), singlesOnly=labeled.filter(n=>chemLabel(n).actives.length===1);
+  const form=cpForm(c.product), ru=CHEM_RU_BASE[form][c.ru]!=null?c.ru:cpDefaultRu(c.product,cpQuote({product:c.product}));
+  if(c.product&&!c.ru)c.ru=ru;
+  const ent=c.ent||'', acres=ent?cpEntAcres(ent):0;
+  const r=cpCheckCalc();
+  const inputs=`<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+    <div><label class="fl">Product</label><select class="fi" style="width:220px" onchange="cpCheckSet('product',this.value)">
+      <option value="">— pick a product —</option>
+      ${premixes.length?`<optgroup label="Premixes">${premixes.map(n=>`<option ${chemNorm(n)===chemNorm(c.product)?'selected':''}>${chemEsc(n)}</option>`).join('')}</optgroup>`:''}
+      ${singlesOnly.length?`<optgroup label="Single active">${singlesOnly.map(n=>`<option ${chemNorm(n)===chemNorm(c.product)?'selected':''}>${chemEsc(n)}</option>`).join('')}</optgroup>`:''}
+    </select></div>
+    <div><label class="fl">Rate / ac</label><div style="display:flex;gap:4px"><input class="fi" type="number" step="any" min="0" value="${chemEsc(c.rate)}" style="width:80px" onchange="cpCheckSet('rate',this.value)">
+      <select class="fi" style="width:64px" onchange="cpCheckSet('ru',this.value)">${Object.keys(CHEM_RU_BASE[form]).map(u=>`<option ${u===ru?'selected':''}>${u}</option>`).join('')}</select></div></div>
+    <div><label class="fl">Savings across</label><select class="fi" style="width:190px" onchange="cpCheckSet('ent',this.value)">
+      <option value="">— acres —</option>${CHEM_ENTS.map(e=>`<option value="${e.k}" ${e.k===ent?'selected':''}>${e.name} (${cpAc(cpEntAcres(e.k))} ac)</option>`).join('')}</select></div>
+  </div>`;
+  let body='';
+  if(!labeled.length) body=`<div style="color:var(--g400);font-size:12px">Add label info (actives and strength) to products in the Registry first. The checker uses it to work out the pounds of active.</div>`;
+  else if(!r) body=`<div style="color:var(--g400);font-size:12px">Pick a product and rate. You'll see what active it delivers and what the same pounds cost bought as separate products.</div>`;
+  else if(!r.need.length) body=`<div style="color:#b45309;font-size:12px">${chemEsc(c.product)} needs label info and a price unit that matches its form before it can be compared.</div>`;
+  else{
+    const base=r.pl, baseTxt=base.q?`${cpMoney(base.cpa)}/ac <span style="color:var(--g400);font-size:11px">(${chemEsc(base.q.vendor||'')} net ${cpMoney(base.net)}/${chemEsc(String(base.q.unit||'').toLowerCase())})</span>`:'<span style="color:#b45309">no quote</span>';
+    let mixTotal=0, mixOk=true;
+    const rows=r.singles.map(s=>{
+      const best=s.opts[0];
+      if(!best||!best.priced)mixOk=false; else mixTotal+=best.cpa;
+      const others=s.opts.slice(1,4).map(o=>`${chemEsc(o.name)} ${cpNum(o.pour)} ${o.ru} = ${o.priced?cpMoney(o.cpa):'no quote'}`).join('<br>');
+      return `<tr><td>${chemEsc(s.active.name)} ${cpGroupBadge(s.active.group)}<div style="font-size:10px;color:var(--g400)">${s.active.lb.toFixed(3)} lb/ac</div></td>
+        <td>${best?`<b>${chemEsc(best.name)}</b>${best.q?`<div style="font-size:10px;color:var(--g400)">${chemEsc(best.q.vendor||'')}</div>`:''}`:`<span style="color:#b45309">No single-active product with label info in your Registry</span>`}</td>
+        <td class="tr" style="white-space:nowrap">${best?`<b>${cpNum(best.pour)} ${best.ru}</b><div style="font-size:10px;color:var(--g400)">exact ${best.exact.toFixed(2)}</div>`:''}</td>
+        <td class="tr">${best?(best.priced?`<b>${cpMoney(best.cpa)}</b>`:`<span style="color:#b45309;font-size:11px">${chemEsc(best.warn||'no quote')}</span>`):''}</td>
+        <td style="font-size:10px;color:var(--g400)">${others}</td></tr>`;}).join('');
+    const diff=base.q&&mixOk?mixTotal-base.cpa:null;
+    const verdict=diff==null?'':`<div class="mc ${diff<0?'green':'amber'}" style="margin:10px 0 0">
+      <div class="ml">${diff<0?'Tank mix is cheaper':'Premix is cheaper'}</div>
+      <div class="mv">${cpMoney(Math.abs(diff))}/ac</div>
+      <div class="ms">${acres?`${cpMoney(Math.abs(diff)*acres,0)} across ${cpAc(acres)} ${chemEsc(cpEnt(ent).name.toLowerCase())} ac`:'pick acres above to see the total'}</div></div>`;
+    const same=r.same.length?`<div style="margin-top:12px;font-size:12px"><b>Other products with the same actives</b>
+      <div class="table-scroll"><table style="margin-top:4px"><thead><tr><th>Product</th><th class="tr">Pour rate</th><th class="tr">$/ac</th><th class="tr">vs ${chemEsc(c.product)}</th></tr></thead><tbody>
+      ${r.same.map(o=>`<tr><td>${chemEsc(o.name)}${o.q?` <span style="font-size:10px;color:var(--g400)">${chemEsc(o.q.vendor||'')}</span>`:''}</td><td class="tr">${cpNum(o.pour)} ${o.ru}</td>
+        <td class="tr">${o.priced?cpMoney(o.cpa):'<span style="color:#b45309">no quote</span>'}</td>
+        <td class="tr">${o.priced&&base.q?`${o.cpa-base.cpa>=0?'+':'−'}${cpMoney(Math.abs(o.cpa-base.cpa))}`:''}</td></tr>`).join('')}</tbody></table></div></div>`:'';
+    const canApply=inModal&&c.ctx&&mixOk&&r.singles.every(s=>s.opts[0]);
+    body=`<div style="font-size:12px;margin-bottom:8px"><b>${chemEsc(c.product)}</b> at ${cpNum(c.rate)} ${ru}/ac delivers
+        ${r.need.map(a=>`${a.lb.toFixed(3)} lb ${chemEsc(a.name)}`).join(' + ')} for ${baseTxt}</div>
+      <div class="table-scroll"><table><thead><tr><th>Active</th><th>Cheapest single product</th><th class="tr">Pour rate</th><th class="tr">$/ac</th><th>Other choices</th></tr></thead>
+        <tbody>${rows}<tr style="font-weight:600;background:var(--g50)"><td colspan="3">Tank mix total</td><td class="tr">${mixOk?cpMoney(mixTotal):'—'}</td><td></td></tr></tbody></table></div>
+      ${verdict}${same}
+      <div style="font-size:10px;color:var(--g400);margin-top:8px">Pour rates are rounded to the nearest ${'¼'} oz (or 0.05 pt/qt/lb) and priced at the rounded rate. Check each label for crop, timing and rate limits before switching.</div>
+      ${canApply?`<button class="btn btn-p" style="margin-top:10px" onclick="cpCheckApply()">Use the tank mix in this program</button>`:''}`;
+  }
+  return `${inModal?'':`<div class="ch"><div><div class="ct">⚖ Premix vs tank mix</div><div class="cs">Does buying the actives separately beat the premix, at rates you'd actually pour?</div></div></div>`}${inputs}${body}`;
+}
+// Replace the premix line with the cheapest single products at their pour rates, in the same pass.
+function cpCheckApply(){
+  const c=cpChk(), r=cpCheckCalc(); if(!c.ctx||!r)return;
+  const p=(S.chemPrograms||[]).find(x=>x.id===c.ctx.prog); if(!p)return;
+  const ps=p.passes[c.ctx.pi]; if(!ps||!ps.lines[c.ctx.li])return;
+  const repl=r.singles.map(s=>s.opts[0]).filter(Boolean).map(o=>({id:cpNewId('l'),product:o.name,rate:o.pour,ru:o.ru,quoteId:o.q?o.q.id:''}));
+  const old=ps.lines[c.ctx.li].product;
+  ps.lines.splice(c.ctx.li,1,...repl);
+  window._cpChk={product:'',rate:'',ru:'',ent:'',ctx:null};
+  cpMsg(`Replaced ${chemEsc(old)} with ${repl.map(x=>chemEsc(x.product)).join(' + ')} in ${chemEsc(ps.name)}. Copy the program first if you want to keep both versions.`);
+  closeModal(); cpSave();
 }
 
 /* ────────────────────────────────────────────────────
